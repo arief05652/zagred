@@ -1,6 +1,6 @@
 [project]
 name = "zagred"
-version = "0.1.0"
+version = "0.1.1"
 description = "Desktop apps from Python backends and web frontends, built with pywebview and Nuitka"
 readme = "README.md"
 license = "MIT"
