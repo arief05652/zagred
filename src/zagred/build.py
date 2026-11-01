@@ -113,6 +113,18 @@ def build(
         )
         return 1
 
+    ok, backend, fix = renderer()
+    if not ok:
+        # Without this, Nuitka happily produces a binary that can never open a
+        # window, because the backend was missing at *build* time.
+        print(
+            f"[zagred] the {backend} backend is not importable from this interpreter,\n"
+            "         so a build made here could not open a window.\n"
+            f"  {fix}",
+            file=sys.stderr,
+        )
+        return 1
+
     if manifest.ui_build_command:
         cwd = root / manifest.ui_dir
         print(f"[zagred] frontend: {manifest.ui_build_command}")

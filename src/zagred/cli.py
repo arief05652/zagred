@@ -184,6 +184,9 @@ def _new(args) -> int:
     steps = [f"cd {name}"]
     if stack.bundler:
         steps.append("cd web && npm install && cd ..")
+    if sys.platform.startswith("linux"):
+        # GTK lives in the distro's python3-gi, invisible to uv's own Python.
+        steps.append("uv venv --python /usr/bin/python3 --system-site-packages")
     steps += ["uv sync", "uv run zagred dev"]
 
     print(f"\n{framework} + {language}. Next steps:")

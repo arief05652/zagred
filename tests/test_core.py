@@ -399,7 +399,7 @@ class DevServerTest(unittest.TestCase):
 class BuildArgvTest(unittest.TestCase):
     """`--jobs` must reach Nuitka, so a build does not eat every core."""
 
-    def _run(self, jobs=None, low_memory=False, manifest_jobs=None, target="onefile"):
+    def _run(self, jobs=None, low_memory=False, manifest_jobs=None, target="onefile", manifest_target="auto"):
         from zagred import build as build_mod
         from zagred.manifest import Manifest
 
@@ -420,9 +420,12 @@ class BuildArgvTest(unittest.TestCase):
                 ui_dist="web/dist",
                 jobs=manifest_jobs,
                 low_memory=low_memory,
+                target=manifest_target,
             )
             with mock.patch.object(build_mod.subprocess, "run", fake_run), mock.patch.object(
                 build_mod.importlib.util, "find_spec", lambda name: object()
+            ), mock.patch.object(
+                build_mod, "renderer", lambda: (True, "gtk", "")
             ), contextlib.redirect_stdout(io.StringIO()):
                 code = build_mod.build(manifest, root, target=target, jobs=jobs)
 
@@ -455,6 +458,28 @@ class BuildArgvTest(unittest.TestCase):
     def test_low_memory_flag(self):
         self.assertIn("--low-memory", self._run(low_memory=True))
 
+    def test_build_refuses_a_backend_that_cannot_open_a_window(self):
+        from zagred import build as build_mod
+        from zagred.manifest import Manifest
+
+        err = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "web" / "dist").mkdir(parents=True)
+            manifest = Manifest(name="demo", entry="demo.app:app", ui_dist="web/dist")
+            with mock.patch.object(
+                build_mod.importlib.util, "find_spec", lambda name: object()
+            ), mock.patch.object(
+                build_mod, "renderer", lambda: (False, "gtk", "sudo apt install python3-gi")
+            ), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                code = build_mod.build(manifest, root, target="onefile")
+            made_artifact = (root / "dist").exists()
+
+        self.assertEqual(code, 1)
+        self.assertIn("could not open a window", err.getvalue())
+        self.assertIn("python3-gi", err.getvalue())
+        self.assertFalse(made_artifact, "a broken backend must not produce a binary")
+
     def _entry(self, debug):
         from zagred import build as build_mod
         from zagred.manifest import Manifest
@@ -467,6 +492,7 @@ class BuildArgvTest(unittest.TestCase):
             err = io.StringIO()
             with mock.patch.object(build_mod.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0)), \
                  mock.patch.object(build_mod.importlib.util, "find_spec", lambda name: object()), \
+                 mock.patch.object(build_mod, "renderer", lambda: (True, "gtk", "")), \
                  contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
                 build_mod.build(manifest, root, target="onefile", debug=debug)
             entry = (root / ".zagred" / "build" / "demo.py").read_text(encoding="utf-8")
