@@ -229,12 +229,16 @@ def bye(): ...
 
 ```bash
 uv sync --group build       # adds Nuitka (+ patchelf on Linux)
-uv run zagred build         # auto target for this OS
+uv run zagred build                     # uses [build] target from zagred.toml
+uv run zagred build --target appimage   # one-off override
 ```
+
+`--target` on the command line beats `[build] target` in the manifest, which
+beats `auto`. Set the manifest once and forget the flag.
 
 | `--target` | Nuitka flags | Output |
 |---|---|---|
-| `auto` *(default)* | picks by OS | `.AppImage` / `.exe` / `.app` |
+| `auto` | picks by OS | `.AppImage` / `.exe` / `.app` |
 | `onefile` | `--mode=onefile` | single binary |
 | `standalone` | `--mode=standalone` | folder with binary + libs |
 | `exe` | `--mode=standalone --windows-create-installer` | NSIS `-setup.exe` |
@@ -408,7 +412,7 @@ directories, `--jobs` / `low_memory`, `zagred doctor`, artifacts named after the
 
 ## Fixed so far
 
-22 bugs found and fixed while building this. The ones that would have shipped:
+23 bugs found and fixed while building this. The ones that would have shipped:
 
 | # | Bug |
 |---|---|
@@ -420,6 +424,7 @@ directories, `--jobs` / `low_memory`, `zagred doctor`, artifacts named after the
 | B19 | Packaged app crashed: `No module named my_app` — dynamic import invisible to Nuitka |
 | B21 | Building one target deleted another's artifacts — shared output dir |
 | B22 | Release AppImage opened the WebView inspector — `--debug` baked into the build |
+| B23 | `[build] target` in `zagred.toml` was silently ignored — `--target` defaulted to `auto` and always won, while `mode` was read by nobody |
 
 Full list with causes and fixes: `git log` and the test suite in `tests/test_core.py`.
 

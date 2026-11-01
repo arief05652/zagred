@@ -50,7 +50,12 @@ def main(argv: list[str] | None = None) -> int:
     dev.add_argument("--debug", action="store_true")
 
     build = sub.add_parser("build", help="compile with Nuitka")
-    build.add_argument("--target", default="auto", help="onefile|standalone|exe|appimage|app|dmg|auto")
+    build.add_argument(
+        "--target",
+        default=None,
+        help="onefile|standalone|exe|appimage|app|dmg|auto "
+        "(default: [build] target from zagred.toml)",
+    )
     build.add_argument(
         "--jobs",
         type=int,

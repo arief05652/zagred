@@ -157,6 +157,7 @@ paket zagred. Cross-compile tidak mungkin — pakai CI.
 | Package app tidak ikut terkompilasi | 🔴 | **Selesai** — B19 |
 | Artefak target saling menimpa | 🔴 | **Selesai** — B21 |
 | Build debug ikut terkirim | 🔴 | **Selesai** — B22 |
+| `[build] target` di TOML diabaikan | 🔴 | **Selesai** — B23; `mode` dihapus, tinggal `target` |
 | Typelib GTK tidak ikut AppImage | 🔴 | Belum diuji di VM bersih |
 | zagred belum di PyPI | 🟠 | Mitigasi `[tool.uv.sources]` |
 | Cross-compile mustahil | 🟠 | CI matrix |

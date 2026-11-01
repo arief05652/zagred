@@ -61,6 +61,18 @@ class ManifestTest(unittest.TestCase):
             self.assertEqual(manifest.module, "demo.app")
             self.assertEqual(manifest.attribute, "app")
 
+    def test_legacy_mode_key_is_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = load_manifest(
+                self._write(
+                    Path(tmp),
+                    '[app]\nname = "demo"\nentry = "demo.app:app"\n'
+                    '[build]\nmode = "onefile"\ntarget = "exe"\n',
+                )
+            )
+            self.assertEqual(manifest.target, "exe")
+            self.assertFalse(hasattr(manifest, "mode"), "mode was folded into target")
+
     def test_entry_required(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ValueError):
@@ -443,6 +455,17 @@ class BuildArgvTest(unittest.TestCase):
 
     def test_jobs_flag_from_cli(self):
         self.assertIn("--jobs=2", self._run(jobs=2))
+
+    def test_manifest_target_used_when_cli_is_silent(self):
+        argv = self._run(target=None, manifest_target="appimage")
+
+        self.assertTrue(any(path.endswith("dist/appimage") for path in argv))
+
+    def test_cli_target_wins_over_manifest(self):
+        argv = self._run(target="standalone", manifest_target="appimage")
+
+        self.assertFalse(any(path.endswith("dist/appimage") for path in argv))
+        self.assertTrue(any(path.endswith("dist/standalone") for path in argv))
 
     def test_jobs_flag_from_manifest(self):
         self.assertIn("--jobs=-1", self._run(manifest_jobs=-1))

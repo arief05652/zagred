@@ -77,7 +77,7 @@ def pick_target(requested: str) -> str:
 def build(
     manifest: Manifest,
     root: Path,
-    target: str = "auto",
+    target: str | None = None,
     debug: bool = False,
     jobs: int | None = None,
 ) -> int:
@@ -93,6 +93,7 @@ def build(
         root: Project root. Frontend commands run in ``root/[ui] dir`` and all
             paths in the manifest are resolved against this.
         target: One of :data:`TARGETS`, or ``"auto"`` to pick by platform.
+            ``None`` falls back to ``[build] target`` from the manifest.
         debug: Bake ``debug=True`` into the app so it opens the WebView
             inspector. Development only — a warning is printed because this is
             easy to ship by accident.
@@ -135,7 +136,7 @@ def build(
             print("[zagred] frontend build failed", file=sys.stderr)
             return code
 
-    target = pick_target(target)
+    target = pick_target(target or manifest.target)
     mode, extra = TARGETS[target]
 
     if debug:

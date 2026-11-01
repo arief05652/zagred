@@ -44,9 +44,9 @@ class Manifest:
             run by ``zagred build`` before Nuitka.
         ui_dist: Directory produced by ``ui_build_command``; bundled into the
             binary under ``ui/``.
-        mode: Default Nuitka compilation mode when ``--target`` is not given.
         target: Default build target (``auto``, ``onefile``, ``standalone``,
-            ``exe``, ``appimage``, ``app``, ``dmg``).
+            ``exe``, ``appimage``, ``app``, ``dmg``). A ``--target`` passed on
+            the command line overrides it.
         output: Directory that receives per-target build output.
         jobs: Default parallelism for the C compiler. ``None`` means "all
             cores"; negative values mean "CPU count minus N".
@@ -66,7 +66,6 @@ class Manifest:
     ui_build_command: str | None = None
     ui_dist: str = "web/dist"
     # [build]
-    mode: str = "onefile"
     target: str = "auto"
     output: str = "dist"
     jobs: int | None = None
@@ -128,7 +127,6 @@ def load_manifest(root: str | Path = ".") -> Manifest:
         ui_dev_url=ui.get("dev_url", "http://localhost:5173"),
         ui_build_command=ui.get("build"),
         ui_dist=ui.get("dist", "web/dist"),
-        mode=build.get("mode", "onefile"),
         target=build.get("target", "auto"),
         output=build.get("output", "dist"),
         jobs=build.get("jobs"),
