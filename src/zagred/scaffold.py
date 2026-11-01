@@ -66,42 +66,86 @@ web/dist/
 web/node_modules/
 """
 
-MANIFEST_STATIC = """\
+_BUILD_SECTION = """\
+[build]
+# What to produce. Each target writes its own dist/<target>/ folder, so
+# building one never overwrites another.
+#   auto        whatever this OS ships best: AppImage, onefile, or .app
+#   onefile     one self-contained executable, slower to start
+#   standalone  folder holding the executable plus its libraries
+#   exe         Windows installer (NSIS)
+#   appimage    Linux AppImage
+#   app         macOS .app bundle
+#   dmg         macOS disk image
+target      = "auto"
+# output      = "dist"   # parent folder for the dist/<target>/ directories
+# jobs        = -1       # parallel C compiles; -2 keeps 2 cores free for other work
+# low_memory  = false    # lighter compiler options, for a small-RAM machine
+"""
+
+MANIFEST_STATIC = (
+    """\
+# zagred.toml — the only config file a Zagred app needs.
+# Anything commented out is optional; delete the leading '#' to use it.
+
 [app]
+# Window title, and the name of the built file.
 name    = "__NAME__"
+# App version, also written into the installer metadata.
 version = "0.1.0"
+# Reverse-DNS id, used by macOS bundles.
 id      = "com.example.__MODULE__"
+# <module>:<the object holding your App>.
 entry   = "__MODULE__.app:app"
+# Icon file: .png on Linux, .ico on Windows, .icns on macOS.
 # icon  = "__MODULE__/resources/icon.png"
 
 [ui]
+# Folder the window loads from.
 dir     = "web"
+# Production build, bundled as ui/ into the binary.
+dist    = "web/dist"
+# Plain files need no build step. Once you add a bundler, switch on:
+# command = "npm run dev -- --port 5173 --strictPort"   # started by zagred dev
+# dev_url = "http://127.0.0.1:5173"                     # zagred dev waits for this port
+# build   = "npm run build"                             # run by zagred build
+
+"""
+    + _BUILD_SECTION
+)
+
+MANIFEST_VITE = (
+    """\
+# zagred.toml — the only config file a Zagred app needs.
+# Anything commented out is optional; delete the leading '#' to use it.
+
+[app]
+# Window title, and the name of the built file.
+name    = "__NAME__"
+# App version, also written into the installer metadata.
+version = "0.1.0"
+# Reverse-DNS id, used by macOS bundles.
+id      = "com.example.__MODULE__"
+# <module>:<the object holding your App>.
+entry   = "__MODULE__.app:app"
+# Icon file: .png on Linux, .ico on Windows, .icns on macOS.
+# icon  = "__MODULE__/resources/icon.png"
+
+[ui]
+# Frontend root, where the commands below run.
+dir     = "web"
+# What zagred dev starts, and the port it waits for.
+# Comment both out to load dist/ directly, with no dev server.
+command = "npm run dev -- --port 5173 --strictPort"
+dev_url = "http://127.0.0.1:5173"
+# Run by zagred build before Nuitka.
+build   = "npm run build"
+# Output of build, bundled as ui/ into the binary.
 dist    = "web/dist"
 
-[build]
-mode    = "onefile"
-target  = "auto"
 """
-
-MANIFEST_VITE = """\
-[app]
-name    = "__NAME__"
-version = "0.1.0"
-id      = "com.example.__MODULE__"
-entry   = "__MODULE__.app:app"
-# icon  = "__MODULE__/resources/icon.png"
-
-[ui]
-dir       = "web"
-command   = "npm run dev -- --port 5173 --strictPort"
-dev_url   = "http://127.0.0.1:5173"
-build     = "npm run build"
-dist      = "web/dist"
-
-[build]
-mode    = "onefile"
-target  = "auto"
-"""
+    + _BUILD_SECTION
+)
 
 
 @dataclass(frozen=True)
