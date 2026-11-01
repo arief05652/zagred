@@ -384,7 +384,7 @@ Generated projects are uv projects; zagred resolved from the local checkout via
 dependency group carries nuitka + patchelf; `zagred new` prints next steps.
 
 ### ✅ M3 — Build
-Six Nuitka targets, asset resolver for dev/standalone/onefile, per-target output
+Six build targets, asset resolver for dev/standalone/onefile, per-target output
 directories, `--jobs` / `low_memory`, `zagred doctor`, artifacts named after the app.
 
 ### 🟡 M4 — Ecosystem

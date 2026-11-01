@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
-# Pisuke work dir
-.pisuke/
+# Zagred work dir
+.zagred/
 *.AppImage
+
+# test folder
+test-zagred/

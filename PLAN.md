@@ -89,7 +89,7 @@ zagred = { path = "/path/to/zagred", editable = true }
 - Typed bridge untuk TypeScript (`web/src/zagred.d.ts`)
 
 ### Build
-- 6 target Nuitka: `onefile`, `standalone`, `exe`, `appimage`, `app`, `dmg` + `auto`
+- 6 target build: `onefile`, `standalone`, `exe`, `appimage`, `app`, `dmg` + `auto`
 - Tiap target menulis ke `dist/<target>/` — tidak saling menimpa
 - Entry script `<name>.py` diimpor **statis** supaya Nuitka ikut membundel package app
 - `--jobs` / `low_memory` untuk membatasi pemakaian CPU
@@ -146,6 +146,7 @@ paket zagred. Cross-compile tidak mungkin — pakai CI.
 - **Satu pintu bridge.** `js_api` hanya punya satu method (`call`).
 - **Satu direktori per target build**, supaya artefak lama tidak tertimpa.
 - **Config TOML**, bukan JSON.
+- **Distribusi Linux lewat AppImage saja.** `.rpm` dan `.deb` sempat dibuat lalu dihapus: Nuitka tidak mendukung keduanya, dan mengemas sendiri berarti menanggung tabel dependency per distro yang berbeda-beda namanya.
 - **Lisensi MIT.** Kode Zagred ikut terkompilasi ke binary user, jadi copyleft (GPL/AGPL) akan menular ke app mereka. MIT menjaga app user tetap bisa closed-source.
 - **`--debug` bukan untuk rilis**, dan build memberi warning.
 
