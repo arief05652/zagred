@@ -541,5 +541,18 @@ class TargetTest(unittest.TestCase):
             pick_target("zip")
 
 
+class TemplateVersionTest(unittest.TestCase):
+    """Tooling versions live in two constants, so every template must use them."""
+
+    def test_every_vite_template_uses_the_shared_versions(self):
+        from zagred.templates import TYPESCRIPT, VITE, VITE_PACKAGES
+
+        for framework, build in VITE_PACKAGES.items():
+            for lang in ("js", "ts"):
+                packages = json.loads(build("demo", lang))
+                self.assertEqual(packages["devDependencies"]["typescript"], TYPESCRIPT, framework)
+                self.assertEqual(packages["devDependencies"]["vite"], VITE, framework)
+
+
 if __name__ == "__main__":
     unittest.main()

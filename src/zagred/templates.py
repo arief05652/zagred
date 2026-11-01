@@ -29,7 +29,7 @@ DEFAULT_LANGUAGE = "js"
 VITE = "^8.3.5"
 """Pinned Vite major, verified to build all four frameworks."""
 
-TYPESCRIPT = "^5.9.0"
+TYPESCRIPT = "^7.0.2"
 """Pinned TypeScript major, verified against the generated tsconfigs."""
 
 # -- shared ----------------------------------------------------------------
