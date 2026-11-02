@@ -12,7 +12,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from .templates import DEFAULT_FRAMEWORK, DEFAULT_LANGUAGE, build_files
+from .templates import (
+    BRIDGE_JS,
+    BRIDGE_TS,
+    DEFAULT_FRAMEWORK,
+    DEFAULT_LANGUAGE,
+    build_files,
+)
 
 PYPROJECT = """\
 [project]
@@ -177,8 +183,8 @@ def render(template: str, name: str, module: str, sources: str) -> str:
     into a new project contain literal braces.
 
     Args:
-        template: Text containing ``__NAME__``, ``__MODULE__`` or
-            ``__SOURCES__`` tokens.
+        template: Text containing ``__NAME__``, ``__MODULE__``, ``__SOURCES__``
+            or one of the ``__BRIDGE_*__`` tokens.
         name: Project name as typed by the user, e.g. ``"my-app"``.
         module: Python-safe module name, e.g. ``"my_app"``.
         sources: Pre-rendered ``[tool.uv.sources]`` block, or empty when zagred
@@ -191,6 +197,8 @@ def render(template: str, name: str, module: str, sources: str) -> str:
         template.replace("__NAME__", name)
         .replace("__MODULE__", module)
         .replace("__SOURCES__", sources)
+        .replace("__BRIDGE_JS__", BRIDGE_JS)
+        .replace("__BRIDGE_TS__", BRIDGE_TS)
     )
 
 

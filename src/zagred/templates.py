@@ -50,6 +50,29 @@ input, button { font: inherit; padding: 6px 10px; margin: 4px; }
 #out { font-family: ui-monospace, monospace; min-height: 1.5em; }
 """
 
+# The backend installs window.zagred from a worker thread, so it can land after
+# the app's first module has already run. Every template declares this lazy
+# wrapper instead of reading window.zagred at import time. Vue needs it for a
+# second reason: its template compiler resolves identifiers against the
+# component instance, so a bare global is invisible to it.
+BRIDGE_JS = """\
+// window.zagred is installed by the backend shim; read it when a call is made
+// so a late injection cannot leave it undefined.
+const zagred = {
+  call: (name, args) => window.zagred.call(name, args),
+  on: (name, fn) => window.zagred.on(name, fn),
+};
+"""
+
+BRIDGE_TS = """\
+// window.zagred is installed by the backend shim; read it when a call is made
+// so a late injection cannot leave it undefined.
+const zagred = {
+  call: (name: string, args?: Record<string, unknown>) => window.zagred.call(name, args),
+  on: (name: string, fn: (payload: unknown) => void) => window.zagred.on(name, fn),
+};
+"""
+
 ZAGRED_DTS = """\
 /// <reference types="vite/client" />
 
@@ -59,8 +82,6 @@ declare global {
   interface Window {
     zagred: ZagredBridge;
   }
-  /** Same object as window.zagred; exposed as a bare global for convenience. */
-  const zagred: ZagredBridge;
 }
 
 export interface ZagredBridge {
@@ -206,6 +227,7 @@ STATIC_FILES = {
 </html>
 """,
     "web/src/main.js": """\
+__BRIDGE_JS__
 const out = document.getElementById("out");
 
 async function show(promise) {
@@ -303,6 +325,7 @@ createRoot(document.getElementById("root")).render(<App />);
         "web/src/App.jsx": """\
 import { useState } from "react";
 
+__BRIDGE_JS__
 export default function App() {
   const [who, setWho] = useState("world");
   const [out, setOut] = useState("\\u2014");
@@ -338,6 +361,7 @@ createRoot(document.getElementById("root")!).render(<App />);
         "web/src/App.tsx": """\
 import { useState } from "react";
 
+__BRIDGE_TS__
 export default function App() {
   const [who, setWho] = useState("world");
   const [out, setOut] = useState("\\u2014");
@@ -377,6 +401,7 @@ render(() => <App />, document.getElementById("root"));
         "web/src/App.jsx": """\
 import { createSignal } from "solid-js";
 
+__BRIDGE_JS__
 export default function App() {
   const [who, setWho] = createSignal("world");
   const [out, setOut] = createSignal("\\u2014");
@@ -412,6 +437,7 @@ render(() => <App />, document.getElementById("root")!);
         "web/src/App.tsx": """\
 import { createSignal } from "solid-js";
 
+__BRIDGE_TS__
 export default function App() {
   const [who, setWho] = createSignal("world");
   const [out, setOut] = createSignal("\\u2014");
@@ -452,6 +478,7 @@ createApp(App).mount("#app");
 <script setup>
 import { ref } from "vue";
 
+__BRIDGE_JS__
 const who = ref("world");
 const out = ref("\\u2014");
 
@@ -487,6 +514,7 @@ createApp(App).mount("#app");
 <script setup lang="ts">
 import { ref } from "vue";
 
+__BRIDGE_TS__
 const who = ref("world");
 const out = ref("\\u2014");
 
@@ -518,6 +546,7 @@ VANILLA_VITE = {
         "web/src/main.js": """\
 import "./style.css";
 
+__BRIDGE_JS__
 const out = document.getElementById("out");
 const who = document.getElementById("who");
 
@@ -539,6 +568,7 @@ document.getElementById("pick").addEventListener("click", () => run(zagred.call(
         "web/src/main.ts": """\
 import "./style.css";
 
+__BRIDGE_TS__
 const out = document.getElementById("out")!;
 const who = document.getElementById("who") as HTMLInputElement;
 

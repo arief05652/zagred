@@ -342,7 +342,7 @@ class TemplateTest(unittest.TestCase):
 
                     for path in paths:
                         text = path.read_text(encoding="utf-8")
-                        for token in ("__NAME__", "__MODULE__", "__SOURCES__"):
+                        for token in ("__NAME__", "__MODULE__", "__SOURCES__", "__BRIDGE_JS__", "__BRIDGE_TS__"):
                             self.assertNotIn(token, text, f"{path.name} kept {token}")
 
                     package = Path(tmp) / "web" / "package.json"
@@ -359,6 +359,32 @@ class TemplateTest(unittest.TestCase):
                         self.assertEqual(manifest.ui_dev_url, "http://127.0.0.1:5173")
                     else:
                         self.assertIsNone(manifest.ui_dev_command)
+
+    def test_bridge_binding_is_declared_wherever_it_is_called(self):
+        """A bare `zagred` only resolves if the same module declares it.
+
+        Vue is the case that hurt: its template compiler looks identifiers up on
+        the component instance, never on ``window``, so the template rendered
+        ``_ctx.zagred.call(...)`` and every button silently threw.
+        """
+        for framework in FRAMEWORKS:
+            for lang in LANGUAGES:
+                with self.subTest(framework=framework, lang=lang), tempfile.TemporaryDirectory() as tmp:
+                    create("demo", Path(tmp), stack=Stack(framework, lang), source=None)
+                    checked = 0
+                    for path in (Path(tmp) / "web").rglob("*"):
+                        if path.suffix not in {".js", ".jsx", ".ts", ".tsx", ".vue"}:
+                            continue
+                        text = path.read_text(encoding="utf-8")
+                        if "zagred.call(" not in text:
+                            continue
+                        checked += 1
+                        self.assertIn(
+                            "const zagred",
+                            text,
+                            f"{framework}/{lang}: {path.name} calls zagred without declaring it",
+                        )
+                    self.assertGreater(checked, 0, f"{framework}/{lang}: no bridge call to check")
 
     def test_ts_templates_ship_bridge_types(self):
         for framework in FRAMEWORKS:
