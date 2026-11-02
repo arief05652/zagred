@@ -13,5 +13,5 @@ stays cheap and never drags in build tooling.
 from .app import App
 from .manifest import Manifest, load_manifest
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 __all__ = ["App", "Manifest", "load_manifest", "__version__"]
