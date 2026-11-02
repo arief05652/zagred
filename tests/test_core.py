@@ -58,6 +58,7 @@ class ManifestTest(unittest.TestCase):
             manifest = load_manifest(self._write(Path(tmp), '[app]\nname = "demo"\nentry = "demo.app:app"\n'))
             self.assertEqual(manifest.id, "com.example.demo")
             self.assertEqual(manifest.ui_dir, "web")
+            self.assertEqual(manifest.ui_package_manager, "npm")
             self.assertEqual(manifest.module, "demo.app")
             self.assertEqual(manifest.attribute, "app")
 
@@ -399,6 +400,82 @@ class TemplateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ValueError):
                 create("demo", Path(tmp), stack=Stack(framework="angular", language="js"), source=None)
+
+
+class PackageManagerTest(unittest.TestCase):
+    """The chosen package manager is recorded once and then always honoured."""
+
+    def test_manifest_records_the_manager(self):
+        for manager in ("npm", "pnpm", "bun"):
+            with self.subTest(manager=manager), tempfile.TemporaryDirectory() as tmp:
+                create("demo", Path(tmp), Stack("react", "js"), source=None, package_manager=manager)
+                text = (Path(tmp) / "zagred.toml").read_text(encoding="utf-8")
+                self.assertIn(f'package_manager = "{manager}"', text)
+                self.assertIn(f'command = "{manager} run dev -- --port 5173', text)
+                self.assertIn(f'build   = "{manager} run build"', text)
+
+    def test_static_frontend_records_it_too(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            create("demo", Path(tmp), Stack("vanilla", "js"), source=None, package_manager="bun")
+            manifest = load_manifest(tmp)
+
+            self.assertEqual(manifest.ui_package_manager, "bun")
+            self.assertIsNone(manifest.ui_dev_command, "plain files must stay server-free")
+
+    def test_unknown_manager_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                create("demo", Path(tmp), Stack("react", "js"), source=None, package_manager="yarn")
+
+    def _project(self, root: Path, manager: str) -> None:
+        (root / "web").mkdir(parents=True)
+        (root / "zagred.toml").write_text(
+            '[app]\nname = "demo"\nentry = "demo.app:app"\n'
+            f'[ui]\npackage_manager = "{manager}"\n',
+            encoding="utf-8",
+        )
+
+    def test_install_uses_the_configured_manager(self):
+        from zagred import cli
+
+        captured = {}
+
+        def fake_run(argv, **kwargs):
+            captured["argv"] = argv
+            return SimpleNamespace(returncode=0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._project(Path(tmp), "pnpm")
+            previous = os.getcwd()
+            os.chdir(tmp)
+            try:
+                with mock.patch.object(cli.subprocess, "run", fake_run), contextlib.redirect_stdout(
+                    io.StringIO()
+                ):
+                    self.assertEqual(cli.main(["install", "vue-router"]), 0)
+                    self.assertEqual(captured["argv"], ["pnpm", "add", "vue-router"])
+
+                    self.assertEqual(cli.main(["install"]), 0)
+                    self.assertEqual(captured["argv"], ["pnpm", "install"])
+            finally:
+                os.chdir(previous)
+
+    def test_install_reports_an_unknown_manager(self):
+        from zagred import cli
+
+        err = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            self._project(Path(tmp), "yarn")
+            previous = os.getcwd()
+            os.chdir(tmp)
+            try:
+                with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                    code = cli.main(["install"])
+            finally:
+                os.chdir(previous)
+
+        self.assertEqual(code, 1)
+        self.assertIn("unknown [ui] package_manager", err.getvalue())
 
 
 class RuntimeTest(unittest.TestCase):

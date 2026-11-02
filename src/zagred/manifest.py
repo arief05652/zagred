@@ -44,6 +44,8 @@ class Manifest:
             run by ``zagred build`` before Nuitka.
         ui_dist: Directory produced by ``ui_build_command``; bundled into the
             binary under ``ui/``.
+        ui_package_manager: ``npm``, ``pnpm`` or ``bun``. Only used by
+            ``zagred install``, which never guesses.
         target: Default build target (``auto``, ``onefile``, ``standalone``,
             ``exe``, ``appimage``, ``app``, ``dmg``). A ``--target`` passed on
             the command line overrides it.
@@ -65,6 +67,7 @@ class Manifest:
     ui_dev_url: str = "http://localhost:5173"
     ui_build_command: str | None = None
     ui_dist: str = "web/dist"
+    ui_package_manager: str = "npm"
     # [build]
     target: str = "auto"
     output: str = "dist"
@@ -127,6 +130,7 @@ def load_manifest(root: str | Path = ".") -> Manifest:
         ui_dev_url=ui.get("dev_url", "http://localhost:5173"),
         ui_build_command=ui.get("build"),
         ui_dist=ui.get("dist", "web/dist"),
+        ui_package_manager=ui.get("package_manager", "npm"),
         target=build.get("target", "auto"),
         output=build.get("output", "dist"),
         jobs=build.get("jobs"),

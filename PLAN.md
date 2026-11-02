@@ -81,7 +81,9 @@ zagred = { path = "/path/to/zagred", editable = true }
 - Lifecycle: `on_start`, `on_loaded`, `on_closing` (return `False` = batal), `on_closed`
 
 ### CLI & template
-- `zagred new` wizard: framework (vanilla/react/vue/solid) + bahasa (js/ts)
+- `zagred new` wizard: framework (vanilla/react/vue/solid) + bahasa (js/ts) + package manager
+- Pilihan package manager (`npm`/`pnpm`/`bun`) dicatat di `[ui] package_manager`, lalu dipakai
+  `zagred install` (install semua deps) maupun `zagred install <pkg>` (tambah dep)
 - 8 kombinasi template, semuanya lolos `npm install` + `npm run build` + `tsc --noEmit`
 - `zagred dev` menjalankan dev server (cwd `web/`), menunggu port, membuka jendela,
   dan membunuh seluruh process group saat jendela ditutup

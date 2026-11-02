@@ -26,7 +26,7 @@ zagred new
 # 3. install everything
 cd my-app
 uv sync
-(cd web && npm install)     # only if you picked a bundler
+uv run zagred install     # frontend deps, with the package manager you picked
 
 # 4. run it
 uv run zagred dev
@@ -35,7 +35,7 @@ uv run zagred dev
 Skip the questions in scripts:
 
 ```bash
-zagred new my-app --template react --lang ts -y
+zagred new my-app --template react --lang ts --pm bun -y
 ```
 
 ### Linux: one extra step
@@ -140,13 +140,40 @@ because the bridge is injected around page-load time.
 
 | Command | What it does |
 |---|---|
-| `zagred new [name]` | Interactive scaffold. `--template`, `--lang`, `-y` for scripts |
+| `zagred new [name]` | Interactive scaffold. `--template`, `--lang`, `--pm`, `-y` for scripts |
 | `zagred dev [--debug]` | Start the frontend dev server, wait for it, open the window |
+| `zagred install [pkg ...]` | Install frontend deps, or add packages, using the project's manager |
 | `zagred build [--target T] [--jobs N] [--debug]` | Build the UI, compile with Nuitka |
 | `zagred doctor` | Check python, pywebview, renderer, nuitka, patchelf, appimagetool |
 
 `zagred dev` cleans up after itself: closing the window kills the whole frontend
 process group, so no orphaned `vite` holding your terminal.
+
+### Package manager
+
+`zagred new` asks which manager to use — `npm`, `pnpm` or `bun` — and records it
+in the manifest, so you never repeat the choice:
+
+```toml
+[ui]
+package_manager = "bun"
+command = "bun run dev -- --port 5173 --strictPort"
+build   = "bun run build"
+```
+
+From then on:
+
+```bash
+uv run zagred install             # bun install
+uv run zagred install vue-router  # bun add vue-router
+```
+
+It reads `[ui] package_manager` and nothing else — no guessing from lockfiles,
+no mixing two managers in one project. Unknown values and a manager that is not
+on `PATH` both fail with the fix spelled out.
+
+The question is skipped for a plain-file frontend (nothing to install) and when
+only one manager is installed. `--pm` answers it up front.
 
 ### Templates
 
