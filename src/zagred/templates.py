@@ -61,6 +61,7 @@ BRIDGE_JS = """\
 const zagred = {
   call: (name, args) => window.zagred.call(name, args),
   on: (name, fn) => window.zagred.on(name, fn),
+  hotkey: (combo, fn) => window.zagred.hotkey(combo, fn),
 };
 """
 
@@ -70,6 +71,7 @@ BRIDGE_TS = """\
 const zagred = {
   call: (name: string, args?: Record<string, unknown>) => window.zagred.call(name, args),
   on: (name: string, fn: (payload: unknown) => void) => window.zagred.on(name, fn),
+  hotkey: (combo: string, fn: (e: HotkeyEvent) => void) => window.zagred.hotkey(combo, fn),
 };
 """
 
@@ -82,13 +84,30 @@ declare global {
   interface Window {
     zagred: ZagredBridge;
   }
+
+  /** Payload of the `hotkey` event. */
+  interface HotkeyPayload {
+    combo: string;
+  }
+
+  /** What `zagred.hotkey(combo, fn)` hands the handler. */
+  interface HotkeyEvent extends HotkeyPayload {
+    event: KeyboardEvent;
+    target: EventTarget | null;
+  }
 }
 
 export interface ZagredBridge {
   ready: Promise<void>;
   call<T = unknown>(name: string, args?: Record<string, unknown>): Promise<T>;
+  /** Bind a shortcut in the page. Returns an unsubscribe function. */
+  hotkey(combo: string, fn: (e: HotkeyEvent) => void): () => void;
+  /** Fires for every shortcut the shim claims, from either side. */
+  on(name: "hotkey", fn: (payload: HotkeyPayload) => void): () => void;
   on(name: string, fn: (payload: unknown) => void): () => void;
   off(name: string, fn: (payload: unknown) => void): void;
+  /** Shortcuts bound from Python, e.g. `["ctrl+k"]`. Empty means none. */
+  hotkeys: string[];
 }
 """
 
