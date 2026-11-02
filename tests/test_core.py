@@ -21,7 +21,7 @@ from unittest import mock
 from zagred import assets
 from zagred.app import App
 from zagred.assets import resolve_ui
-from zagred.bridge import Bridge
+from zagred.bridge import HOTKEY, SHIM, Bridge, key_table, normalize
 from zagred.build import pick_target
 from zagred.manifest import load_manifest
 from zagred.scaffold import Stack, create
@@ -202,14 +202,16 @@ class RunLoopTest(unittest.TestCase):
                 closed=RunLoopTest._Slot(),
             )
             self.exports = []
+            self.scripts = []
 
         def evaluate_js(self, script):
             self.exports.append(threading.current_thread().name)
+            self.scripts.append(script)
 
         def run_js(self, script):
             pass
 
-    def _run(self, ui_path: Path):
+    def _run(self, ui_path: Path, app=None):
         created = []
 
         def create_window(*args, **kwargs):
@@ -225,7 +227,7 @@ class RunLoopTest(unittest.TestCase):
         fake.settings = {}
 
         with mock.patch.dict(sys.modules, {"webview": fake}):
-            App().run(ui=str(ui_path))
+            (app or App()).run(ui=str(ui_path))
         return created[0]
 
     def test_shim_is_not_injected_on_the_blocking_thread(self):
@@ -332,6 +334,57 @@ class RunLoopTest(unittest.TestCase):
             self.assertTrue(kw["zoomable"])
             self.assertEqual(kw["background_color"], "#101010")
 
+    def test_registered_hotkeys_reach_the_shim(self):
+        # The shim has to match shortcuts itself to cancel the keystroke
+        # synchronously, so the list is injected beside it.
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "index.html"
+            index.write_text("<html></html>", encoding="utf-8")
+            app = App()
+            app.hotkey("Ctrl+K", lambda: None)
+            window = self._run(index, app=app)
+
+            window.events.before_load.handlers[0]()
+            deadline = time.time() + 2
+            while not window.scripts and time.time() < deadline:
+                time.sleep(0.01)
+
+            script = window.scripts[0]
+            self.assertIn('window.zagred.hotkeys = ["ctrl+k"]', script)
+            self.assertIn("window.zagred._keys = {", script)
+
+    def test_the_grammar_tables_are_sent_even_without_hotkeys(self):
+        # The UI may bind a shortcut at any time, so its normalize() needs the
+        # tables before Python has bound anything.
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "index.html"
+            index.write_text("<html></html>", encoding="utf-8")
+            window = self._run(index)
+
+            window.events.before_load.handlers[0]()
+            deadline = time.time() + 2
+            while not window.scripts and time.time() < deadline:
+                time.sleep(0.01)
+
+            script = window.scripts[0]
+            self.assertEqual(
+                json.loads(script.split("window.zagred._keys = ", 1)[1].split(";", 1)[0]),
+                key_table(),
+            )
+
+    def test_no_hotkey_block_when_nothing_is_bound(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "index.html"
+            index.write_text("<html></html>", encoding="utf-8")
+            window = self._run(index)
+
+            window.events.before_load.handlers[0]()
+            deadline = time.time() + 2
+            while not window.scripts and time.time() < deadline:
+                time.sleep(0.01)
+
+            self.assertNotIn("hotkeys =", window.scripts[0])
+
 
 class TemplateTest(unittest.TestCase):
     def test_every_combination_scaffolds_and_parses(self):
@@ -395,6 +448,16 @@ class TemplateTest(unittest.TestCase):
                 create("demo", Path(tmp), stack=Stack(framework=framework, language="ts"), source=None)
                 self.assertTrue((Path(tmp) / "web" / "src" / "zagred.d.ts").is_file())
                 self.assertTrue((Path(tmp) / "web" / "tsconfig.json").is_file())
+
+    def test_the_hotkey_types_are_ambient(self):
+        # BRIDGE_TS names HotkeyEvent without importing it, so the interface has
+        # to live in `declare global` or every generated TS app fails to compile.
+        from zagred.templates import BRIDGE_TS, ZAGRED_DTS
+
+        ambient = ZAGRED_DTS.split("declare global {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("interface HotkeyEvent", ambient)
+        self.assertIn("interface HotkeyPayload", ambient)
+        self.assertIn("hotkey:", BRIDGE_TS)
 
     def test_unknown_stack_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -655,6 +718,88 @@ class TemplateVersionTest(unittest.TestCase):
                 packages = json.loads(build("demo", lang))
                 self.assertEqual(packages["devDependencies"]["typescript"], TYPESCRIPT, framework)
                 self.assertEqual(packages["devDependencies"]["vite"], VITE, framework)
+
+
+class HotkeyTest(unittest.TestCase):
+    """Matching is a string comparison, so both sides must spell it the same."""
+
+    def test_case_spacing_and_modifier_order_do_not_matter(self):
+        for combo in ("Ctrl+Shift+P", "shift+ctrl+p", " ctrl + SHIFT + p ", "Ctrl+Shift+Ctrl+p"):
+            with self.subTest(combo=combo):
+                self.assertEqual(normalize(combo), "ctrl+shift+p")
+
+    def test_mod_follows_the_platform(self):
+        self.assertEqual(normalize("mod+k", mac=False), "ctrl+k")
+        self.assertEqual(normalize("mod+k", mac=True), "meta+k")
+        self.assertEqual(normalize("cmd+k", mac=False), "meta+k")
+
+    def test_key_aliases_land_on_the_event_key_spelling(self):
+        self.assertEqual(normalize("Esc"), "escape")
+        self.assertEqual(normalize("Alt+Up"), "alt+arrowup")
+        self.assertEqual(normalize("Return"), "enter")
+        self.assertEqual(normalize("ctrl+plus"), "ctrl++")
+        self.assertEqual(normalize("Space"), "space")
+
+    def test_a_shortcut_needs_exactly_one_key(self):
+        for bad in ("", "ctrl", "ctrl+ctrl", "ctrl+a+b"):
+            with self.subTest(combo=bad), self.assertRaises(ValueError):
+                normalize(bad)
+
+    def test_registration_normalizes_and_supports_the_decorator_form(self):
+        app = App()
+        calls = []
+
+        @app.hotkey("Ctrl+K")
+        def open_palette():
+            calls.append("ran")
+
+        self.assertIn("ctrl+k", app._hotkeys)
+        app._hotkeys["ctrl+k"]()
+        self.assertEqual(calls, ["ran"])
+
+    def test_a_bad_combo_fails_at_startup_not_at_keypress(self):
+        with self.assertRaises(ValueError):
+            App().hotkey("ctrl", lambda: None)
+
+    def test_bridge_runs_the_bound_function(self):
+        calls = []
+        bridge = Bridge({}, {"ctrl+k": lambda: calls.append("ran")})
+
+        self.assertEqual(bridge.call(HOTKEY, {"combo": "ctrl+k"}), {"ok": True, "data": True})
+        self.assertEqual(calls, ["ran"])
+        # A combo the shim knows about but Python does not is not an error.
+        self.assertEqual(bridge.call(HOTKEY, {"combo": "ctrl+j"}), {"ok": True, "data": False})
+
+    def test_a_failing_shortcut_reports_instead_of_crashing(self):
+        def boom():
+            raise RuntimeError("nope")
+
+        result = Bridge({}, {"ctrl+k": boom}).call(HOTKEY, {"combo": "ctrl+k"})
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], {"code": "RuntimeError", "message": "nope"})
+
+    def test_an_exposed_function_cannot_hijack_the_hotkey_command(self):
+        bridge = Bridge({HOTKEY: lambda: "hijacked"}, {})
+
+        self.assertEqual(bridge.call(HOTKEY, {"combo": "x"}), {"ok": True, "data": False})
+
+    def test_the_shim_carries_the_matching_logic(self):
+        for piece in ("keydown", HOTKEY, '"hotkey"', "preventDefault", "isComposing"):
+            self.assertIn(piece, SHIM)
+
+    def test_the_ui_can_bind_its_own_shortcuts(self):
+        self.assertIn("hotkey(combo, fn)", SHIM)
+
+    def test_the_grammar_tables_are_complete(self):
+        # One source of truth: the UI normalises with the same data.
+        table = key_table()
+
+        self.assertEqual(table["aliases"]["esc"], "escape")
+        self.assertEqual(table["aliases"]["up"], "arrowup")
+        self.assertEqual(table["order"], ["ctrl", "meta", "alt", "shift"])
+        self.assertIn(table["mod"], ("ctrl", "meta"))
+        self.assertEqual(json.loads(json.dumps(table)), table, "must survive the trip to JS")
 
 
 if __name__ == "__main__":
