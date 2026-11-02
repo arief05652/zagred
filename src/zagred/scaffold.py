@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -89,6 +90,25 @@ target      = "auto"
 # low_memory  = false    # lighter compiler options, for a small-RAM machine
 """
 
+PACKAGE_MANAGERS = {
+    "npm": {"install": "npm install", "add": "npm install", "run": "npm run"},
+    "pnpm": {"install": "pnpm install", "add": "pnpm add", "run": "pnpm run"},
+    "bun": {"install": "bun install", "add": "bun add", "run": "bun run"},
+}
+
+DEFAULT_PACKAGE_MANAGER = "npm"
+
+
+def detect_package_managers() -> list[str]:
+    """Find the JavaScript package managers available on ``PATH``.
+
+    Returns:
+        Names usable as a package manager, in :data:`PACKAGE_MANAGERS` order so
+        ``npm`` wins ties. Empty when none of them is installed.
+    """
+    return [name for name in PACKAGE_MANAGERS if shutil.which(name)]
+
+
 MANIFEST_STATIC = (
     """\
 # zagred.toml — the only config file a Zagred app needs.
@@ -111,10 +131,12 @@ entry   = "__MODULE__.app:app"
 dir     = "web"
 # Production build, bundled as ui/ into the binary.
 dist    = "web/dist"
-# Plain files need no build step. Once you add a bundler, switch on:
-# command = "npm run dev -- --port 5173 --strictPort"   # started by zagred dev
-# dev_url = "http://127.0.0.1:5173"                     # zagred dev waits for this port
-# build   = "npm run build"                             # run by zagred build
+# Which package manager zagred install uses, if you add a bundler later.
+package_manager = "__PM__"
+# Plain files need no build step. Once you add a bundler, switch on these three:
+# command = "__PM_RUN__ dev -- --port 5173 --strictPort"
+# dev_url = "http://127.0.0.1:5173"
+# build   = "__PM_RUN__ build"
 
 """
     + _BUILD_SECTION
@@ -140,12 +162,14 @@ entry   = "__MODULE__.app:app"
 [ui]
 # Frontend root, where the commands below run.
 dir     = "web"
+# Which package manager zagred install uses: npm, pnpm or bun.
+package_manager = "__PM__"
 # What zagred dev starts, and the port it waits for.
 # Comment both out to load dist/ directly, with no dev server.
-command = "npm run dev -- --port 5173 --strictPort"
+command = "__PM_RUN__ dev -- --port 5173 --strictPort"
 dev_url = "http://127.0.0.1:5173"
 # Run by zagred build before Nuitka.
-build   = "npm run build"
+build   = "__PM_RUN__ build"
 # Output of build, bundled as ui/ into the binary.
 dist    = "web/dist"
 
@@ -176,29 +200,50 @@ class Stack:
         return not (self.framework == "vanilla" and self.language == "js")
 
 
-def render(template: str, name: str, module: str, sources: str) -> str:
+def render(
+    template: str,
+    name: str,
+    module: str,
+    sources: str,
+    package_manager: str = DEFAULT_PACKAGE_MANAGER,
+) -> str:
     """Substitute the scaffold placeholders in one template string.
 
     ``str.format`` cannot be used here: the CSS and JavaScript that get written
     into a new project contain literal braces.
 
     Args:
-        template: Text containing ``__NAME__``, ``__MODULE__``, ``__SOURCES__``
-            or one of the ``__BRIDGE_*__`` tokens.
+        template: Text containing ``__NAME__``, ``__MODULE__``, ``__SOURCES__``,
+            one of the ``__BRIDGE_*__`` tokens or one of the ``__PM*__`` tokens.
         name: Project name as typed by the user, e.g. ``"my-app"``.
         module: Python-safe module name, e.g. ``"my_app"``.
         sources: Pre-rendered ``[tool.uv.sources]`` block, or empty when zagred
             is installed from an index.
+        package_manager: One of :data:`PACKAGE_MANAGERS`. Its commands fill the
+            ``__PM__`` (name), ``__PM_INSTALL__``, ``__PM_ADD__`` and
+            ``__PM_RUN__`` tokens.
 
     Returns:
         The template with every known token replaced.
+
+    Raises:
+        ValueError: If ``package_manager`` is not a known manager.
     """
+    commands = PACKAGE_MANAGERS.get(package_manager)
+    if commands is None:
+        raise ValueError(
+            f"unknown package manager {package_manager!r}; pick one of {sorted(PACKAGE_MANAGERS)}"
+        )
     return (
         template.replace("__NAME__", name)
         .replace("__MODULE__", module)
         .replace("__SOURCES__", sources)
         .replace("__BRIDGE_JS__", BRIDGE_JS)
         .replace("__BRIDGE_TS__", BRIDGE_TS)
+        .replace("__PM__", package_manager)
+        .replace("__PM_INSTALL__", commands["install"])
+        .replace("__PM_ADD__", commands["add"])
+        .replace("__PM_RUN__", commands["run"])
     )
 
 
@@ -256,6 +301,7 @@ def create(
     root: Path,
     stack: Stack = Stack(),
     source=_AUTO,
+    package_manager: str = DEFAULT_PACKAGE_MANAGER,
 ) -> list[Path]:
     """Write a complete, runnable project into ``root``.
 
@@ -271,12 +317,15 @@ def create(
         source: Local zagred checkout to pin in ``[tool.uv.sources]``. Defaults to
             auto-detection via :func:`local_source`; pass ``None`` explicitly to
             force an index dependency.
+        package_manager: One of :data:`PACKAGE_MANAGERS`, recorded in the
+            manifest and used for the commands written into it.
 
     Returns:
         Paths of every file written, in creation order, for progress output.
 
     Raises:
-        ValueError: If ``stack`` names an unknown framework or language.
+        ValueError: If ``stack`` names an unknown framework or language, or
+            ``package_manager`` is not a known manager.
     """
     module = name.replace("-", "_")
     if source is _AUTO:
@@ -295,8 +344,10 @@ def create(
 
     written: list[Path] = []
     for relative, template in files.items():
-        path = root / render(relative, name, module, sources)
+        path = root / render(relative, name, module, sources, package_manager)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(render(template, name, module, sources), encoding="utf-8")
+        path.write_text(
+            render(template, name, module, sources, package_manager), encoding="utf-8"
+        )
         written.append(path)
     return written

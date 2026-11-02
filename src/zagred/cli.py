@@ -1,9 +1,10 @@
 """The ``zagred`` command line.
 
-Four commands share this module: ``new`` (interactive scaffold), ``dev`` (run
-against the UI source), ``build`` (compile with Nuitka) and ``doctor`` (report
-what the toolchain is missing). ``dev`` and ``build`` are thin wrappers; the real
-work lives in :mod:`zagred.scaffold` and :mod:`zagred.build`.
+Five commands share this module: ``new`` (interactive scaffold), ``dev`` (run
+against the UI source), ``install`` (drive the project's package manager),
+``build`` (compile with Nuitka) and ``doctor`` (report what the toolchain is
+missing). ``dev``, ``install`` and ``build`` are thin wrappers; the real work
+lives in :mod:`zagred.scaffold` and :mod:`zagred.build`.
 """
 
 from __future__ import annotations
@@ -21,7 +22,12 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .manifest import load_manifest
-from .scaffold import Stack
+from .scaffold import (
+    DEFAULT_PACKAGE_MANAGER,
+    PACKAGE_MANAGERS,
+    Stack,
+    detect_package_managers,
+)
 from .templates import DEFAULT_FRAMEWORK, DEFAULT_LANGUAGE, FRAMEWORKS, LANGUAGES
 
 NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]*$")
@@ -44,10 +50,24 @@ def main(argv: list[str] | None = None) -> int:
     new.add_argument("name", nargs="?")
     new.add_argument("--template", choices=FRAMEWORKS, help="frontend framework")
     new.add_argument("--lang", choices=LANGUAGES, help="javascript or typescript")
+    new.add_argument(
+        "--pm",
+        choices=sorted(PACKAGE_MANAGERS),
+        help="package manager for the frontend (default: ask, or the first one found)",
+    )
     new.add_argument("-y", "--yes", action="store_true", help="accept defaults instead of asking")
 
     dev = sub.add_parser("dev", help="run the app against the UI source")
     dev.add_argument("--debug", action="store_true")
+
+    install = sub.add_parser(
+        "install", help="install frontend dependencies, or add packages"
+    )
+    install.add_argument(
+        "packages",
+        nargs="*",
+        help="packages to add; omit to install what package.json already declares",
+    )
 
     build = sub.add_parser("build", help="compile with Nuitka")
     build.add_argument(
@@ -74,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
         return _new(args)
     if args.command == "dev":
         return _dev(args.debug)
+    if args.command == "install":
+        return _install(args.packages)
     if args.command == "build":
         from .build import build
 
@@ -177,24 +199,25 @@ def _new(args) -> int:
         DEFAULT_LANGUAGE if quiet else _choose("Script language", LANGUAGES, DEFAULT_LANGUAGE)
     )
     stack = Stack(framework=framework, language=language)
+    package_manager = args.pm or _pick_package_manager(stack, quiet)
 
     root = Path.cwd() / name
     if root.exists():
         print(f"[zagred] {root} already exists", file=sys.stderr)
         return 1
 
-    for path in create(name, root, stack=stack):
+    for path in create(name, root, stack=stack, package_manager=package_manager):
         print(f"  created {path.relative_to(Path.cwd())}")
 
     steps = [f"cd {name}"]
     if stack.bundler:
-        steps.append("cd web && npm install && cd ..")
+        steps.append(f"cd web && {PACKAGE_MANAGERS[package_manager]['install']} && cd ..")
     if sys.platform.startswith("linux"):
         # GTK lives in the distro's python3-gi, invisible to uv's own Python.
         steps.append("uv venv --python /usr/bin/python3 --system-site-packages")
     steps += ["uv sync", "uv run zagred dev"]
 
-    print(f"\n{framework} + {language}. Next steps:")
+    print(f"\n{framework} + {language} + {package_manager}. Next steps:")
     for step in steps:
         print(f"  {step}")
     print(
@@ -203,6 +226,27 @@ def _new(args) -> int:
         "  uv run zagred build\n"
     )
     return 0
+
+
+def _pick_package_manager(stack: Stack, quiet: bool) -> str:
+    """Decide which package manager the generated manifest records.
+
+    A plain-file frontend never installs anything, so it keeps the default
+    rather than asking a question that has no effect.
+
+    Args:
+        stack: Chosen frontend stack; only ``bundler`` is read.
+        quiet: Skip the prompt and take the first available manager.
+
+    Returns:
+        A key of :data:`PACKAGE_MANAGERS`.
+    """
+    if not stack.bundler:
+        return DEFAULT_PACKAGE_MANAGER
+    available = detect_package_managers() or [DEFAULT_PACKAGE_MANAGER]
+    if quiet or len(available) == 1:
+        return available[0]
+    return _choose("Package manager", available, available[0])
 
 
 def _ui_cwd(root: Path, manifest) -> Path:
@@ -218,6 +262,42 @@ def _ui_cwd(root: Path, manifest) -> Path:
     """
     candidate = root / manifest.ui_dir
     return candidate if candidate.is_dir() else root
+
+
+def _install(packages: list[str]) -> int:
+    """Handle ``zagred install``: drive the project's package manager.
+
+    The manager comes from ``[ui] package_manager``, never from guessing, so a
+    project scaffolded with bun keeps using bun. With no arguments this installs
+    what ``package.json`` already declares; with arguments it adds packages.
+
+    Args:
+        packages: Package names to add. Empty means "install everything".
+
+    Returns:
+        ``0`` on success, ``1`` when the configured manager is unknown or not
+        installed, otherwise the manager's own exit code.
+    """
+    root = Path.cwd()
+    manifest = load_manifest(root)
+    manager = manifest.ui_package_manager
+    commands = PACKAGE_MANAGERS.get(manager)
+    if commands is None:
+        print(
+            f"[zagred] unknown [ui] package_manager {manager!r}; "
+            f"pick one of {sorted(PACKAGE_MANAGERS)}",
+            file=sys.stderr,
+        )
+        return 1
+
+    cwd = _ui_cwd(root, manifest)
+    argv = (commands["add"] if packages else commands["install"]).split() + packages
+    print(f"[zagred] {' '.join(argv)}  (in {cwd.name}/)")
+    try:
+        return subprocess.run(argv, cwd=cwd).returncode
+    except FileNotFoundError:
+        print(f"[zagred] {manager} is not installed or not on PATH", file=sys.stderr)
+        return 1
 
 
 def _dev(debug: bool) -> int:
