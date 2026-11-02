@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 from .assets import resolve_ui
-from .bridge import SHIM, Bridge
+from .bridge import SHIM, Bridge, key_table, normalize
 
 # Printed when no webview engine can be imported. Keyed by ``sys.platform``;
 # the Linux text also explains the uv/`python3-gi` split, which is the single
@@ -156,6 +156,7 @@ class App:
         self.menu = menu or []
 
         self._exposed: dict[str, Callable] = {}
+        self._hotkeys: dict[str, Callable] = {}
         self._start_hooks: list[Callable] = []
         self._loaded_hooks: list[Callable] = []
         self._closing_hooks: list[Callable] = []
@@ -188,6 +189,48 @@ class App:
             ...     return f"Hello, {name}!"
         """
         self._exposed[fn.__name__] = fn
+        return fn
+
+    def hotkey(self, combo: str, fn: Callable | None = None):
+        """Bind a keyboard shortcut to a Python function.
+
+        The key is grabbed by the shim before the page sees it, so the browser's
+        own action is cancelled — pressing ``Ctrl+P`` runs your function instead
+        of opening a print dialog. A shortcut matched in the UI is also
+        dispatched as a ``hotkey`` event, so page code can react without a trip
+        through Python:
+
+        .. code-block:: js
+
+            zagred.on("hotkey", ({ combo }) => console.log(combo));
+
+        A shortcut with no modifier is ignored while an input, textarea, select
+        or contenteditable element has focus, so typing ``k`` into a search box
+        never fires ``Ctrl+K``'s sibling ``k``.
+
+        Args:
+            combo: The shortcut, e.g. ``"Ctrl+K"``. Modifiers are
+                ``ctrl``/``meta``/``alt``/``shift``, plus ``mod`` for Ctrl on
+                Linux and Windows and Cmd on macOS. Key names follow
+                ``event.key``: ``a``, ``1``, ``escape``, ``enter``, ``up``, ``f5``.
+            fn: Zero-argument callable. Omit it to use this as a decorator.
+
+        Returns:
+            ``fn`` unchanged, or a decorator when ``fn`` is omitted.
+
+        Raises:
+            ValueError: If ``combo`` is empty, has no key, or names two keys.
+                Raised at registration time, before the window opens.
+
+        Example:
+            >>> @app.hotkey("mod+k")
+            ... def palette() -> None:
+            ...     app.emit("open", "palette")
+        """
+        if fn is None:
+            return lambda inner: self.hotkey(combo, inner)
+
+        self._hotkeys[normalize(combo)] = fn
         return fn
 
     def on_start(self, fn: Callable) -> Callable:
@@ -481,7 +524,7 @@ class App:
         window = webview.create_window(
             self.title,
             url=target,
-            js_api=Bridge(self._exposed),
+            js_api=Bridge(self._exposed, self._hotkeys),
             **self._window_kwargs(),
         )
         self._window = window
@@ -495,8 +538,20 @@ class App:
             def work():
                 """Evaluate the shim on a worker thread and ignore late failures."""
 
+                # The shim also parses combos the UI binds itself, so it needs
+                # the same tables Python normalises with. Always sent.
+                script = SHIM
+                script += "\nwindow.zagred._keys = %s;" % json.dumps(key_table())
+                if self._hotkeys:
+                    # Combos bound in Python, so the shim knows what to claim.
+                    # shortcut: injected once, so hotkey() after run() is ignored;
+                    # push the array again if live rebinding is ever needed.
+                    script += "\nwindow.zagred.hotkeys = %s;" % json.dumps(
+                        sorted(self._hotkeys)
+                    )
+
                 try:
-                    window.evaluate_js(SHIM)
+                    window.evaluate_js(script)
                 except Exception:  # noqa: BLE001 - the page may already be gone
                     pass
 
