@@ -134,6 +134,69 @@ off(); // unsubscribe
 script code should `await zagred.ready` (or call from inside an event handler)
 because the bridge is injected around page-load time.
 
+### Hotkeys
+
+There are two places to bind one, and the difference is where the work happens,
+not how the key is matched.
+
+**In Python**, when the shortcut should do something native — a dialog, a
+window change, a background job:
+
+```python
+@app.hotkey("mod+k")
+def palette() -> None:
+    app.emit("open", "palette")
+```
+
+**In the page**, when the shortcut moves the UI itself — focus a field, step
+through a list, jump to a section:
+
+```js
+const off = zagred.hotkey("j", () => setIndex((i) => i + 1));
+zagred.hotkey("/", () => document.querySelector("input")?.focus());
+zagred.hotkey("enter", ({ target }) => target?.closest("li")?.click());
+off(); // unsubscribe
+```
+
+The handler receives `{ combo, event, target }`, so it can inspect the real
+`KeyboardEvent` and whatever had focus. A page-side binding never touches the
+bridge: no round-trip, no Python, and it works immediately — `zagred.hotkey()`
+can be called at any time, unlike a Python binding, which is fixed when the shim
+is injected.
+
+The shim matches the keystroke before the page sees it, so both kinds cancel the
+browser's own action — `Ctrl+P` opens your palette instead of a print dialog.
+Every matched shortcut, from either side, also fires a `hotkey` event:
+
+```js
+zagred.on("hotkey", ({ combo }) => setStatus(`last key: ${combo}`));
+```
+
+| Written | Means |
+|---|---|
+| `ctrl` / `control` | Ctrl on every platform |
+| `meta` / `cmd` / `super` / `win` | the platform key |
+| `alt` / `option` | Alt |
+| `shift` | Shift |
+| `mod` | Ctrl on Linux and Windows, Cmd on macOS |
+| `esc`, `return`, `up`, `del`, `space`, `plus` | the obvious keys |
+
+Case, spacing and modifier order do not matter: `Ctrl+Shift+P`, `shift+ctrl+p`
+and `CTRL + SHIFT + p` are the same shortcut. Everything else is the
+`event.key` name, lowercased — `a`, `1`, `f5`, `tab`, `arrowdown`. Both sides use
+the same grammar tables, so `mod+k` normalises identically in Python and in the
+page.
+
+A shortcut **without** a modifier is ignored while an input, textarea, select or
+contenteditable element has focus, so typing `j` in a search box does not fire a
+`j` shortcut. `Escape` is the exception — it never inserts anything, and
+"cancel" is what a user expects. Modifier shortcuts are never affected, because
+`Ctrl+K` is not something you type.
+
+An invalid shortcut fails at registration: `ValueError` in Python, a thrown
+`Error` in the page. Nothing is left silently unbound. A shortcut pressed
+mid-composition (IME) is ignored.
+
 ---
 
 ## CLI
