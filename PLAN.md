@@ -70,7 +70,10 @@ zagred = { path = "/path/to/zagred", editable = true }
 - `app.emit()` → `zagred.on()` lewat `run_js` + literal JSON (aman CSP tanpa `unsafe-eval`)
 - Shim disuntik dari worker thread — `evaluate_js` di `before_load` deadlock
 - Validasi serialisasi JSON sebelum hasil meninggalkan Python
-- 38 unit test (`uv run python -m unittest discover -s tests`)
+- Hotkey dua sisi: `@app.hotkey()` untuk aksi native, `zagred.hotkey()` di halaman
+  untuk memanipulasi DOM tanpa round-trip ke Python (shim mencocokkan kombo lebih
+  dulu agar `preventDefault` sinkron)
+- 65 unit test (`uv run python -m unittest discover -s tests`)
 
 ### App & jendela
 - 20+ opsi jendela: `size`, `min_size`, `position`, `resizable`, `fullscreen`,
@@ -79,6 +82,8 @@ zagred = { path = "/path/to/zagred", editable = true }
 - Kontrol runtime: `minimize/maximize/restore/toggle_fullscreen/resize/move/`
   `set_title/show/hide/destroy/load_url/evaluate_js/create_file_dialog`
 - Lifecycle: `on_start`, `on_loaded`, `on_closing` (return `False` = batal), `on_closed`
+- Hotkey: `ctrl`/`meta`/`alt`/`shift` + `mod`, alias `esc`/`up`/`space`;
+  kombo dinormalisasi saat registrasi, jadi ejaan bebas urutan
 
 ### CLI & template
 - `zagred new` wizard: framework (vanilla/react/vue/solid) + bahasa (js/ts) + package manager
