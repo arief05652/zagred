@@ -13,8 +13,5 @@ wheels/
 .zagred/
 *.AppImage
 
-# Zensical output
-site/
-
 # test folder
 test-zagred/
