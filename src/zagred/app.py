@@ -7,7 +7,6 @@ there is a single source of truth.
 
 from __future__ import annotations
 
-import inspect
 import json
 import sys
 import threading
@@ -74,14 +73,15 @@ class App:
         easy_drag: bool = True,
         on_top: bool = False,
         focus: bool = True,
+        shadow: bool = False,
         confirm_close: bool = False,
         transparent: bool = False,
+        text_select: bool = False,
+        zoomable: bool = False,
+        vibrancy: bool = False,
         background_color: str = "#ffffff",
         icon: str | None = None,
         menu: list | None = None,
-        draggable: bool = False,
-        settings: dict | None = None,
-        start: dict | None = None,
     ) -> None:
         """Configure the window that :meth:`run` will open.
 
@@ -112,30 +112,22 @@ class App:
                 floating palettes; avoid for normal apps.
             focus: Take keyboard focus on open. Set ``False`` for background or
                 notification-style windows.
+            shadow: Draw a drop shadow around a ``frameless`` window.
             confirm_close: Ask the user to confirm before closing. Combine with
                 :meth:`on_closing` when you need to save state first.
             transparent: Allow transparent pixels behind the webview. Requires a
                 transparent background in your CSS as well.
+            text_select: Allow selecting text. Defaults to ``False``, which
+                matches native app behaviour; enable it for document-style UIs.
+            zoomable: Enable pinch/ctrl-wheel zooming of the page.
+            vibrancy: macOS only — blurred, translucent background material.
+                Ignored on Linux and Windows.
             background_color: Color painted before the page renders, as a CSS
                 color string. Set it to match your UI to avoid a flash of white.
             icon: Path to the window icon (PNG on Linux/Windows, ICNS or PNG on
                 macOS). Also used by ``zagred build`` when ``[app] icon`` is set.
             menu: Platform menu definition passed straight to pywebview. Empty
                 means "no custom menu".
-            draggable: Let elements matching ``.pywebview-drag-region`` inside a
-                frameless window move it. Unlike ``easy_drag`` this is per
-                element, so buttons in the same bar keep working.
-            settings: ``webview.settings`` overrides, applied before the window
-                opens. Keys are validated against what pywebview knows, so a
-                typo fails the build of the window instead of being ignored.
-                Useful: ``{"ALLOW_DOWNLOADS": True}``,
-                ``{"OPEN_EXTERNAL_LINKS_IN_BROWSER": False}``,
-                ``{"IGNORE_SSL_ERRORS": True}`` for a kiosk app.
-            start: Extra ``webview.start()`` arguments Zagred does not wrap:
-                ``user_agent``, ``private_mode``, ``storage_path``,
-                ``http_server``, ``http_port``, ``gui``, ``ssl``,
-                ``localization``, ``server``, ``server_args``, ``menu``.
-                Validated the same way as ``settings``.
 
         Raises:
             Nothing. Invalid paths and unsupported options surface when
@@ -153,28 +145,23 @@ class App:
         self.easy_drag = easy_drag
         self.on_top = on_top
         self.focus = focus
+        self.shadow = shadow
         self.confirm_close = confirm_close
         self.transparent = transparent
+        self.text_select = text_select
+        self.zoomable = zoomable
+        self.vibrancy = vibrancy
         self.background_color = background_color
         self.icon = icon
         self.menu = menu or []
-        self.draggable = draggable
-        self.settings = dict(settings or {})
-        self.start = dict(start or {})
 
         self._exposed: dict[str, Callable] = {}
         self._hotkeys: dict[str, Callable] = {}
-        self._event_hooks: dict[str, list[Callable]] = {}
-        # Set once the page has loaded. pywebview gates run_js on before_load and
-        # waits up to 20s for it, so emitting from an earlier event (initialized,
-        # before_show) would stall the GUI thread instead of failing fast.
-        self._ready = False
         self._start_hooks: list[Callable] = []
         self._loaded_hooks: list[Callable] = []
         self._closing_hooks: list[Callable] = []
         self._closed_hooks: list[Callable] = []
         self._window = None
-        self._bridge: Bridge | None = None
 
     # -- decorators -----------------------------------------------------
 
@@ -313,46 +300,6 @@ class App:
         self._closed_hooks.append(fn)
         return fn
 
-    def on_event(self, name: str, fn: Callable | None = None):
-        """Run ``fn`` when pywebview reports one of its own events.
-
-        The four decorators above cover the lifecycle Zagred needs. This reaches
-        the rest of pywebview's event surface without inventing a wrapper per
-        event:
-
-        ``before_show``, ``initialized``, ``shown``, ``minimized``,
-        ``maximized``, ``restored``, ``resized``, ``moved``, ``request_sent``,
-        ``response_received`` — plus ``before_load``, ``loaded``, ``closing``,
-        ``closed``, which also still work through the decorators.
-
-        ``fn`` receives whatever pywebview passes for that event, so the
-        signature differs per event — ``resized`` gets ``width``/``height``,
-        ``request_sent`` gets the request. Accept ``*args, **kwargs`` when you
-        do not care. Returning ``False`` cancels the close for ``closing``.
-
-        The name is checked when the window is created, not here, so a typo
-        fails at startup with the list of real names instead of being silently
-        never called.
-
-        Args:
-            name: pywebview event name.
-            fn: Callable invoked with that event's arguments.
-
-        Returns:
-            ``fn`` unchanged, or a decorator when ``fn`` is omitted, so this
-            works both as ``@app.on_event("resized")`` and as a plain call.
-
-        Example:
-            >>> @app.on_event("resized")
-            ... def remember(width, height) -> None:
-            ...     print(width, height)
-        """
-        if fn is None:
-            return lambda inner: self.on_event(name, inner)
-
-        self._event_hooks.setdefault(name, []).append(fn)
-        return fn
-
     # -- events ---------------------------------------------------------
 
     def emit(self, name: str, payload=None) -> None:
@@ -362,11 +309,8 @@ class App:
         keeps working under a strict Content-Security-Policy that forbids
         ``unsafe-eval``.
 
-        Silent no-op before the page can receive it — no window yet, or a window
-        that exists but has not finished loading. From the GUI thread the actual
-        push is handed to a worker thread, because pywebview runs several events
-        (``before_load``, ``before_show``, ``closing``) synchronously on that
-        thread and ``run_js`` needs it to answer.
+        Silent no-op before the window exists, which makes ``emit`` safe to call
+        from hooks and background threads without null checks.
 
         Args:
             name: Event name. Must match the string the UI subscribed to.
@@ -376,31 +320,13 @@ class App:
             TypeError: If ``payload`` is not JSON-serialisable (raised by
                 ``json.dumps``; nothing is sent in that case).
         """
-        if self._window is None or not self._ready:
+        if self._window is None:
             return
         script = "window.zagred&&window.zagred._dispatch(%s,%s)" % (
             json.dumps(name),
             json.dumps(payload),
         )
-
-        def send() -> None:
-            """Push the event, ignoring the window vanishing underneath us."""
-            window = self._window
-            if window is None:
-                return
-            try:
-                window.run_js(script)
-            except Exception:  # noqa: BLE001 - pywebview raises while teardown runs
-                pass
-
-        if threading.current_thread() is threading.main_thread():
-            # pywebview runs some events (before_load, before_show, closing)
-            # synchronously on the GUI thread, and run_js needs that same loop to
-            # answer: calling it here blocks for the full 20s timeout, which
-            # freezes the window instead of delivering anything.
-            threading.Thread(target=send, daemon=True).start()
-        else:
-            send()
+        self._window.run_js(script)
 
     # -- window control -------------------------------------------------
 
@@ -409,39 +335,6 @@ class App:
         if self._window is None:
             raise RuntimeError("the window is not running yet")
         return self._window
-
-    # -- live window state ----------------------------------------------
-
-    @property
-    def width(self) -> int:
-        """Current width in logical pixels, as the window manager sees it."""
-        return self._win().width
-
-    @property
-    def height(self) -> int:
-        """Current height in logical pixels, as the window manager sees it."""
-        return self._win().height
-
-    @property
-    def x(self) -> int:
-        """Current left edge on the screen, in logical pixels."""
-        return self._win().x
-
-    @property
-    def y(self) -> int:
-        """Current top edge on the screen, in logical pixels."""
-        return self._win().y
-
-    @property
-    def state(self):
-        """Live window state as pywebview's ``State`` object.
-
-        It is mapping-like and may be empty until the backend reports a change,
-        so do not assume a ``NORMAL`` value before the user has touched the
-        window. Compare against ``webview.window.State`` members when it is
-        populated.
-        """
-        return self._win().state
 
     def minimize(self) -> None:
         """Minimize the window to the taskbar or dock."""
@@ -503,30 +396,17 @@ class App:
     def load_url(self, url: str) -> None:
         """Navigate the current window to another URL.
 
-        Called from inside an ``@app.expose`` function, the navigation is
-        deferred by a fraction of a second. pywebview hands the function's
-        result back to JavaScript *after* it returns, and starting the
-        navigation first destroys the document that result was meant for: the
-        delivery then blocks for its full 20s timeout, and every later call in
-        the page hangs behind it. Deferring lets the answer land first.
-        Measured on WebKitGTK 4.1 with pywebview 6.2.
-
         Args:
             url: Absolute URL, or a path resolvable by the asset resolver.
         """
-        if self._bridge is not None and self._bridge.busy:
-            # shortcut: a 0.3s timer, not proof the answer landed; pywebview
-            # offers no "after the response" hook to wait on.
-            threading.Timer(0.3, self._win().load_url, args=(url,)).start()
-            return
         self._win().load_url(url)
 
     def evaluate_js(self, script: str):
         """Run JavaScript in the page and return its last expression.
 
         Blocks until the page answers, so call it from a worker thread rather
-        than from a blocking window event. For a result you do not need, use
-        :meth:`run_js` — it never waits.
+        than from a blocking window event. Requires the page to allow ``eval``
+        unless you use ``window.run_js`` semantics.
 
         Args:
             script: JavaScript source. A raw string is recommended for scripts
@@ -539,37 +419,38 @@ class App:
         """
         return self._win().evaluate_js(script)
 
-    def run_js(self, script: str):
-        """Run JavaScript without waiting for an answer.
+    def create_file_dialog(
+        self,
+        allow_multiple: bool = False,
+        directory: str = "",
+        save_filename: str = "",
+        file_types: tuple = (),
+    ) -> tuple | None:
+        """Open the operating system's file picker.
 
-        Fire-and-forget: the script is queued and executed later, so read its
-        effect with :meth:`evaluate_js` (or on a later call), never on the next
-        line. Safe from any thread and works under a strict CSP that forbids
-        ``eval``.
+        Blocks until the user answers, so call it from inside an ``@app.expose``
+        function (which already runs on a worker thread) rather than from a hook
+        that must stay responsive.
 
         Args:
-            script: JavaScript source.
+            allow_multiple: Let the user select more than one file.
+            directory: Directory the dialog opens in. Empty means the OS default.
+            save_filename: Pre-filled file name, for save-style dialogs.
+            file_types: Tuple of ``"Description (*.ext;*.ext)"`` strings used to
+                filter the list. Empty allows all files.
 
         Returns:
-            Whatever the backend reports for the call; nothing you should rely
-            on.
+            A tuple of absolute paths, or ``None`` if the user cancelled.
         """
-        return self._win().run_js(script)
+        import webview
 
-    def load_css(self, stylesheet: str) -> None:
-        """Inject a stylesheet into the loaded page.
-
-        Queued like :meth:`run_js`, so the rules are not in effect on the next
-        line. Nothing is written to disk and nothing survives a navigation.
-
-        Args:
-            stylesheet: Raw CSS, not a path. Read the file yourself first.
-        """
-        self._win().load_css(stylesheet)
-
-    def get_current_url(self) -> str | None:
-        """The URL the window is showing, or ``None`` before it commits one."""
-        return self._win().get_current_url()
+        return self._win().create_file_dialog(
+            webview.FileDialog.OPEN,
+            directory=directory,
+            allow_multiple=allow_multiple,
+            save_filename=save_filename,
+            file_types=file_types,
+        )
 
     # -- run ------------------------------------------------------------
 
@@ -598,11 +479,14 @@ class App:
             "easy_drag": self.easy_drag,
             "on_top": self.on_top,
             "focus": self.focus,
+            "shadow": self.shadow,
             "confirm_close": self.confirm_close,
             "transparent": self.transparent,
+            "text_select": self.text_select,
+            "zoomable": self.zoomable,
+            "vibrancy": self.vibrancy,
             "background_color": self.background_color,
             "menu": self.menu,
-            "draggable": self.draggable,
         }
         if self.position:
             kwargs["x"], kwargs["y"] = self.position
@@ -636,39 +520,14 @@ class App:
         # inspector window. Tie it to the explicit flag instead of global state.
         webview.settings["OPEN_DEVTOOLS_IN_DEBUG"] = debug
 
-        # Both dicts are validated here, where pywebview is importable, so a typo
-        # fails at startup with the list of real names instead of being ignored.
-        _check_options(self.settings, webview.settings, "webview.settings")
-        for key, value in self.settings.items():
-            webview.settings[key] = value
-        # func/args/debug/icon are Zagred's to pass; letting them through here
-        # would collide with the keywords used below.
-        start_params = set(inspect.signature(webview.start).parameters)
-        _check_options(
-            self.start, start_params - {"func", "args", "debug", "icon"}, "webview.start"
-        )
-
         target = resolve_ui(ui)
-        bridge = Bridge(self._exposed, self._hotkeys)
-        self._bridge = bridge
         window = webview.create_window(
             self.title,
             url=target,
-            js_api=bridge,
+            js_api=Bridge(self._exposed, self._hotkeys),
             **self._window_kwargs(),
         )
         self._window = window
-
-        available = {name for name in dir(window.events) if not name.startswith("_")}
-        unknown = sorted(set(self._event_hooks) - available)
-        if unknown:
-            raise ValueError(
-                f"unknown pywebview event(s): {', '.join(unknown)}\n"
-                f"  available: {', '.join(sorted(available))}"
-            )
-        for name, hooks in self._event_hooks.items():
-            event = getattr(window.events, name)
-            event += _hook_runner(hooks)
 
         def inject(*_args):
             """Inject the JS shim off-thread, because this event blocks."""
@@ -705,80 +564,22 @@ class App:
                     return False
             return True
 
-        def mark_loading(*_args) -> None:
-            """Close the emit gate again: the document is being replaced."""
-            self._ready = False
-
-        def mark_ready(*_args) -> None:
-            """Unlock emit() now that the page can receive events."""
-            self._ready = True
-
-        window.events.before_load += mark_loading
         window.events.before_load += inject
-        window.events.loaded += mark_ready
         window.events.loaded += lambda *_: _run_all(self._loaded_hooks)
         window.events.closing += closing
         window.events.closed += lambda *_: _run_all(self._closed_hooks)
 
         try:
-            webview.start(
-                debug=debug,
-                func=_run_all,
-                args=(self._start_hooks,),
-                icon=self.icon,
-                **self.start,
-            )
+            webview.start(debug=debug, func=_run_all, args=(self._start_hooks,), icon=self.icon)
         except webview.errors.WebViewException as exc:
             print(f"\n{exc}\n", file=sys.stderr)
             hint = WEBVIEW_HINT.get(sys.platform) or "Install GTK or Qt bindings for your system."
             print(hint, file=sys.stderr)
             raise SystemExit(1) from exc
         self._window = None
-        self._ready = False
-        self._bridge = None
 
 
 def _run_all(hooks: list[Callable]) -> None:
     """Call every hook in order, letting exceptions propagate to the caller."""
     for hook in hooks:
         hook()
-
-
-def _hook_runner(hooks: list[Callable]) -> Callable:
-    """Wrap several hooks into the single callable pywebview expects.
-
-    Returns:
-        A callable that forwards the event's arguments to every hook and
-        propagates ``False``, which is how pywebview cancels a close.
-    """
-
-    def run(*args, **kwargs):
-        result = None
-        for hook in hooks:
-            value = hook(*args, **kwargs)
-            if value is False:
-                return False
-            result = value
-        return result
-
-    return run
-
-
-def _check_options(given: dict, known, where: str) -> None:
-    """Reject option names pywebview does not recognise.
-
-    Args:
-        given: User-supplied mapping.
-        known: Mapping or parameter view of accepted names.
-        where: Name used in the error, e.g. ``"webview.start"``.
-
-    Raises:
-        ValueError: If ``given`` holds a key that is not in ``known``. The list
-            of valid names is included, so the fix is visible in the traceback.
-    """
-    unknown = sorted(set(given) - set(known))
-    if unknown:
-        raise ValueError(
-            f"unknown {where} option(s): {', '.join(unknown)}\n"
-            f"  known: {', '.join(sorted(known))}"
-        )
