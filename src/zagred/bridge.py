@@ -251,6 +251,8 @@ class Bridge:
             ``@app.expose``.
         _hotkeys: Mapping of normalized shortcut to the function registered with
             :meth:`zagred.app.App.hotkey`.
+        _calls: How many dispatches are running right now. Navigation uses it to
+            defer until the answer has been delivered to JavaScript.
     """
 
     def __init__(self, registry: dict, hotkeys: dict | None = None):
@@ -265,6 +267,12 @@ class Bridge:
         """
         self._registry = registry
         self._hotkeys = hotkeys if hotkeys is not None else {}
+        self._calls = 0
+
+    @property
+    def busy(self) -> bool:
+        """True while a dispatch is in flight, i.e. a bridge call is running."""
+        return self._calls > 0
 
     def call(self, name: str, args: dict | None = None) -> dict:
         """Dispatch one command and return a result envelope.
@@ -295,6 +303,25 @@ class Bridge:
         if name == HOTKEY:
             return self._pressed((args or {}).get("combo"))
 
+        self._calls += 1
+        try:
+            return self._dispatch(name, args)
+        finally:
+            self._calls -= 1
+
+    def _dispatch(self, name: str, args: dict | None) -> dict:
+        """Look the command up and run it, returning the result envelope.
+
+        Split out of :meth:`call` so the in-flight counter is decremented even
+        when the function raises.
+
+        Args:
+            name: Registered command name.
+            args: Keyword arguments from JavaScript.
+
+        Returns:
+            The ``ok``/``error`` envelope described in :meth:`call`.
+        """
         fn = self._registry.get(name)
         if fn is None:
             return _error("unknown_command", f"no exposed function named {name!r}")

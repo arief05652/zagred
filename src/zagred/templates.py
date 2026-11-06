@@ -238,7 +238,6 @@ STATIC_FILES = {
       <h1>__NAME__</h1>
       <input id="who" value="world" />
       <button id="go">say hello</button>
-      <button id="pick">pick a file</button>
       <p id="out">&mdash;</p>
     </main>
     <script type="module" src="src/main.js"></script>
@@ -261,9 +260,6 @@ document.getElementById("go").addEventListener("click", () =>
   show(zagred.call("greet", { name: document.getElementById("who").value })),
 );
 
-document.getElementById("pick").addEventListener("click", () =>
-  show(zagred.call("pick_file")),
-);
 """,
 }
 
@@ -362,7 +358,6 @@ export default function App() {
       <h1>__NAME__</h1>
       <input value={who} onChange={(e) => setWho(e.target.value)} />
       <button onClick={() => run(zagred.call("greet", { name: who }))}>say hello</button>
-      <button onClick={() => run(zagred.call("pick_file"))}>pick a file</button>
       <p id="out">{out}</p>
     </main>
   );
@@ -399,7 +394,6 @@ export default function App() {
       <h1>__NAME__</h1>
       <input value={who} onChange={(e) => setWho(e.target.value)} />
       <button onClick={() => run(zagred.call("greet", { name: who }))}>say hello</button>
-      <button onClick={() => run(zagred.call("pick_file"))}>pick a file</button>
       <p id="out">{out}</p>
     </main>
   );
@@ -438,7 +432,6 @@ export default function App() {
       <h1>__NAME__</h1>
       <input value={who()} onInput={(e) => setWho(e.currentTarget.value)} />
       <button onClick={() => run(zagred.call("greet", { name: who() }))}>say hello</button>
-      <button onClick={() => run(zagred.call("pick_file"))}>pick a file</button>
       <p id="out">{out()}</p>
     </main>
   );
@@ -475,7 +468,6 @@ export default function App() {
       <h1>__NAME__</h1>
       <input value={who()} onInput={(e) => setWho(e.currentTarget.value)} />
       <button onClick={() => run(zagred.call("greet", { name: who() }))}>say hello</button>
-      <button onClick={() => run(zagred.call("pick_file"))}>pick a file</button>
       <p id="out">{out()}</p>
     </main>
   );
@@ -515,7 +507,6 @@ async function run(promise) {
     <h1>__NAME__</h1>
     <input v-model="who" />
     <button @click="run(zagred.call('greet', { name: who }))">say hello</button>
-    <button @click="run(zagred.call('pick_file'))">pick a file</button>
     <p id="out">{{ out }}</p>
   </main>
 </template>
@@ -552,7 +543,6 @@ async function run(promise: Promise<unknown>) {
     <h1>__NAME__</h1>
     <input v-model="who" />
     <button @click="run(zagred.call('greet', { name: who }))">say hello</button>
-    <button @click="run(zagred.call('pick_file'))">pick a file</button>
     <p id="out">{{ out }}</p>
   </main>
 </template>
@@ -580,7 +570,6 @@ async function run(promise) {
 document.getElementById("go").addEventListener("click", () =>
   run(zagred.call("greet", { name: who.value })),
 );
-document.getElementById("pick").addEventListener("click", () => run(zagred.call("pick_file")));
 """,
     },
     "ts": {
@@ -603,7 +592,6 @@ async function run(promise: Promise<unknown>) {
 document.getElementById("go")!.addEventListener("click", () =>
   run(zagred.call("greet", { name: who.value })),
 );
-document.getElementById("pick")!.addEventListener("click", () => run(zagred.call("pick_file")));
 """,
     },
 }
@@ -613,8 +601,7 @@ BODY_MARKUP = """\
         <h1>__NAME__</h1>
         <input id="who" value="world" />
         <button id="go">say hello</button>
-        <button id="pick">pick a file</button>
-        <p id="out">&mdash;</p>
+          <p id="out">&mdash;</p>
       </main>
 """
 
