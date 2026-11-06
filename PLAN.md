@@ -76,12 +76,23 @@ zagred = { path = "/path/to/zagred", editable = true }
 - 65 unit test (`uv run python -m unittest discover -s tests`)
 
 ### App & jendela
-- 20+ opsi jendela: `size`, `min_size`, `position`, `resizable`, `fullscreen`,
+- 20 opsi jendela: `size`, `min_size`, `position`, `resizable`, `fullscreen`,
   `frameless`, `easy_drag`, `on_top`, `confirm_close`, `transparent`,
-  `text_select`, `zoomable`, `vibrancy`, `background_color`, `icon`, `menu`
+  `background_color`, `icon`, `menu`, `focus`, `draggable`, `settings`, `start`
 - Kontrol runtime: `minimize/maximize/restore/toggle_fullscreen/resize/move/`
-  `set_title/show/hide/destroy/load_url/evaluate_js/create_file_dialog`
+  `set_title/show/hide/destroy/load_url/evaluate_js/load_css/run_js/get_current_url`
 - Lifecycle: `on_start`, `on_loaded`, `on_closing` (return `False` = batal), `on_closed`
+- Sengaja TIDAK ada, karena terukur rusak/tak berguna di Linux:
+  `load_html` (bridge mati di navigasi berikutnya), `create_file_dialog` dan
+  `create_confirmation_dialog` (`Gtk.Dialog.run()` di thread non-main → dialog
+  tak pernah tampil), `get_cookies`/`clear_cookies` (tak ada sesi server),
+  `shadow`/`vibrancy`/`text_select`/`zoomable` (backend GTK tidak membacanya),
+  `evaluate_js(callback)` (nilainya sudah dikembalikan). Semua sisanya ada di
+  `app.window`.
+- Properti live: `width`, `height`, `x`, `y`, `state`
+- `on_event(nama, fn)` untuk 14 event pywebview (resized, moved, shown, request_sent, ...)
+- `draggable`, plus `settings={...}` dan `start={...}` — pass-through tervalidasi,
+  jadi typo gagal saat start dengan daftar nama yang sah
 - Hotkey: `ctrl`/`meta`/`alt`/`shift` + `mod`, alias `esc`/`up`/`space`;
   kombo dinormalisasi saat registrasi, jadi ejaan bebas urutan
 

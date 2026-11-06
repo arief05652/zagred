@@ -87,12 +87,6 @@ def greet(name: str) -> str:
 @app.expose
 async def scan(folder: str) -> list[str]:
     ...
-
-
-@app.expose
-def pick_file() -> str | None:
-    files = app.create_file_dialog()
-    return files[0] if files else None
 ```
 
 Rules worth knowing:
@@ -271,17 +265,21 @@ app = zagred.App(
     easy_drag=True,           # frameless windows stay draggable
     on_top=False,
     focus=True,
-    shadow=False,
     confirm_close=False,      # ask before closing
     transparent=False,
-    text_select=False,
-    zoomable=False,
-    vibrancy=False,           # macOS
     background_color="#ffffff",
     icon="my_app/resources/icon.png",
     menu=[],
+    draggable=False,         # let .pywebview-drag-region move a frameless window
+    settings={"ALLOW_DOWNLOADS": True},
+    start={"user_agent": "MyApp/1.0", "private_mode": False},
 )
 ```
+
+`settings` and `start` are the escape hatches for everything pywebview exposes
+and Zagred does not wrap: every `webview.settings` key and every
+`webview.start()` argument. Both are validated at startup, so a typo fails with
+the list of real names instead of doing nothing.
 
 Control it at runtime:
 
@@ -292,8 +290,30 @@ app.resize(900, 600) / app.move(50, 50)
 app.set_title("Renamed")
 app.show() / app.hide() / app.destroy()
 app.load_url("http://localhost:5173")
-app.evaluate_js("document.title")
-app.create_file_dialog(allow_multiple=False)   # native picker
+app.evaluate_js("document.title")            # blocking, returns the value
+app.run_js("localStorage.clear()")           # fire and forget, CSP-safe
+app.load_css("body { background: #111 }")    # queued, applies later
+app.get_current_url()
+```
+
+Not here on purpose, each measured broken or useless on Linux:
+
+| Missing | Why | Instead |
+| --- | --- | --- |
+| `load_html()` | the next navigation kills pywebview's bridge | `load_url()` |
+| `create_file_dialog()` | `Gtk.Dialog.run()` runs off the main thread, so no dialog ever appears | `<input type="file">` in the page |
+| `create_confirmation_dialog()` | same GTK problem | `confirm_close=True` |
+| `get_cookies()` / `clear_cookies()` | a desktop app has no server session to keep | `app.window` |
+| `shadow=`, `vibrancy=`, `text_select=`, `zoomable=` | the GTK backend never reads them | CSS |
+
+Anything else pywebview offers is on `app.window`, the raw window object.
+
+Read the live window, instead of the values you asked for at startup:
+
+```python
+app.width, app.height, app.x, app.y   # what the window manager settled on
+app.state                             # pywebview State, may be empty
+app.window                            # the raw pywebview Window, or None
 ```
 
 Lifecycle hooks:
@@ -312,6 +332,22 @@ def guard():
 @app.on_closed
 def bye(): ...
 ```
+
+And the rest of pywebview's events, when you need them:
+
+```python
+@app.on_event("resized")
+def remember(width, height): ...
+
+@app.on_event("request_sent")
+def trace(*args, **kwargs): ...
+```
+
+`before_load`, `before_show`, `initialized`, `loaded`, `shown`, `minimized`,
+`maximized`, `restored`, `resized`, `moved`, `request_sent`,
+`response_received`, `closing`, `closed`. The handler receives that event's own
+arguments; an unknown name fails when the window is created, listing the real
+ones.
 
 ---
 
@@ -527,6 +563,26 @@ uv sync --extra build
 uv run python -m unittest discover -s tests     # 38 tests
 uv run zagred doctor
 ```
+
+## Documentation
+
+Built with [Zensical](https://zensical.org) from `docs/` and `zensical.toml`:
+
+```bash
+uvx zensical serve     # live preview on :8000
+uvx zensical build     # static site into site/
+```
+
+Publishing: `.github/workflows/docs.yml` builds `docs/` on every push to `main`
+that touches it, and deploys `site/` to GitHub Pages. One-time setup — set the
+Pages source to GitHub Actions:
+
+```bash
+gh api -X POST repos/arief05652/zagred/pages -f build_type=workflow
+```
+
+(or Settings → Pages → Source: **GitHub Actions**). Site lands at
+<https://arief05652.github.io/zagred/>.
 
 ## License
 

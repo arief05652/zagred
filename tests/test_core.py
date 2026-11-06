@@ -181,54 +181,136 @@ class ScaffoldTest(unittest.TestCase):
             self.assertNotIn("tool", data)
 
 
+class _Slot:
+    """Stands in for one pywebview event: records handlers, fires on +=."""
+
+    def __init__(self):
+        self.handlers = []
+
+    def __iadd__(self, fn):
+        self.handlers.append(fn)
+        return self
+
+
+class _FakeWindow:
+    """Stands in for one pywebview window, recording what reaches it."""
+
+    def __init__(self):
+        self.kw = {}
+        self.events = SimpleNamespace(
+            **{
+                name: _Slot()
+                for name in (
+                    "_pywebviewready",
+                    "before_load",
+                    "before_show",
+                    "closed",
+                    "closing",
+                    "initialized",
+                    "loaded",
+                    "maximized",
+                    "minimized",
+                    "moved",
+                    "request_sent",
+                    "resized",
+                    "response_received",
+                    "restored",
+                    "shown",
+                )
+            }
+        )
+        self.exports = []
+        self.scripts = []
+        self.calls = []
+        self.width, self.height, self.x, self.y = 1024, 700, 10, 20
+        self.state = "NORMAL"
+
+    def evaluate_js(self, script):
+        self.exports.append(threading.current_thread().name)
+        self.scripts.append(script)
+        return "answered"
+
+    def run_js(self, script):
+        self.calls.append(("run_js", script))
+
+    def load_css(self, stylesheet):
+        self.calls.append(("load_css", stylesheet))
+
+    def get_current_url(self):
+        return "http://127.0.0.1:5173/"
+
+
+# Mirrors the keys pywebview 6 ships, so option validation is exercised for real.
+_FAKE_SETTINGS = {
+    "ALLOW_DOWNLOADS": False,
+    "ALLOW_FILE_URLS": True,
+    "DRAG_REGION_DIRECT_TARGET_ONLY": False,
+    "DRAG_REGION_SELECTOR": ".pywebview-drag-region",
+    "DEFAULT_HTTP_PORT": 42001,
+    "IGNORE_SSL_ERRORS": False,
+    "OPEN_DEVTOOLS_IN_DEBUG": True,
+    "OPEN_EXTERNAL_LINKS_IN_BROWSER": True,
+    "REMOTE_DEBUGGING_PORT": None,
+    "SHOW_DEFAULT_MENUS": True,
+    "WEBVIEW2_RUNTIME_PATH": None,
+}
+
+
+def _fake_webview_run(ui_path: Path, app=None):
+    """Run ``app`` against a fake pywebview module and return the window."""
+    created = []
+
+    def create_window(*args, **kwargs):
+        window = _FakeWindow()
+        window.kw = kwargs
+        created.append(window)
+        return window
+
+    def start(
+        func=None,
+        args=None,
+        localization=None,
+        gui=None,
+        debug=False,
+        http_server=False,
+        http_port=None,
+        user_agent=None,
+        private_mode=True,
+        storage_path=None,
+        menu=None,
+        server=None,
+        server_args=None,
+        ssl=False,
+        icon=None,
+    ):
+        # Same signature as pywebview.start, so option validation is real.
+        created[0].start_kwargs = {key: value for key, value in locals().items() if key != "self"}
+
+    fake = types.ModuleType("webview")
+    fake.create_window = create_window
+    fake.start = start
+    fake.errors = SimpleNamespace(WebViewException=RuntimeError)
+    fake.settings = dict(_FAKE_SETTINGS)
+
+    with mock.patch.dict(sys.modules, {"webview": fake}):
+        (app or App()).run(ui=str(ui_path))
+    created[0].settings = fake.settings
+    return created[0]
+
+
 class RunLoopTest(unittest.TestCase):
     """B12: injecting the shim on the before_load thread deadlocked the page."""
 
-    class _Slot:
-        def __init__(self):
-            self.handlers = []
-
-        def __iadd__(self, fn):
-            self.handlers.append(fn)
-            return self
-
-    class _Window:
-        def __init__(self):
-            self.kw = {}
-            self.events = SimpleNamespace(
-                before_load=RunLoopTest._Slot(),
-                loaded=RunLoopTest._Slot(),
-                closing=RunLoopTest._Slot(),
-                closed=RunLoopTest._Slot(),
-            )
-            self.exports = []
-            self.scripts = []
-
-        def evaluate_js(self, script):
-            self.exports.append(threading.current_thread().name)
-            self.scripts.append(script)
-
-        def run_js(self, script):
-            pass
+    _Slot = _Slot
+    _Window = _FakeWindow
 
     def _run(self, ui_path: Path, app=None):
-        created = []
+        return _fake_webview_run(ui_path, app)
 
-        def create_window(*args, **kwargs):
-            window = self._Window()
-            window.kw = kwargs
-            created.append(window)
-            return window
-
-        fake = types.ModuleType("webview")
-        fake.create_window = create_window
-        fake.start = lambda **kwargs: None
-        fake.errors = SimpleNamespace(WebViewException=RuntimeError)
-        fake.settings = {}
-
-        with mock.patch.dict(sys.modules, {"webview": fake}):
-            (app or App()).run(ui=str(ui_path))
-        return created[0]
+    def _fire(self, window, event: str) -> None:
+        """Run every handler of an event, in registration order."""
+        for handler in getattr(window.events, event).handlers:
+            handler()
 
     def test_shim_is_not_injected_on_the_blocking_thread(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -237,7 +319,7 @@ class RunLoopTest(unittest.TestCase):
             window = self._run(index)
 
             self.assertEqual(window.exports, [])
-            window.events.before_load.handlers[0]()
+            self._fire(window, "before_load")
 
             deadline = time.time() + 2
             while not window.exports and time.time() < deadline:
@@ -315,7 +397,7 @@ class RunLoopTest(unittest.TestCase):
                 on_top=True,
                 confirm_close=True,
                 transparent=True,
-                zoomable=True,
+                draggable=True,
                 background_color="#101010",
             )
             with mock.patch.dict(sys.modules, {"webview": fake}):
@@ -331,7 +413,8 @@ class RunLoopTest(unittest.TestCase):
             self.assertTrue(kw["on_top"])
             self.assertTrue(kw["confirm_close"])
             self.assertTrue(kw["transparent"])
-            self.assertTrue(kw["zoomable"])
+            self.assertTrue(kw["draggable"])
+            self.assertTrue(kw["transparent"])
             self.assertEqual(kw["background_color"], "#101010")
 
     def test_registered_hotkeys_reach_the_shim(self):
@@ -344,7 +427,7 @@ class RunLoopTest(unittest.TestCase):
             app.hotkey("Ctrl+K", lambda: None)
             window = self._run(index, app=app)
 
-            window.events.before_load.handlers[0]()
+            self._fire(window, "before_load")
             deadline = time.time() + 2
             while not window.scripts and time.time() < deadline:
                 time.sleep(0.01)
@@ -361,7 +444,7 @@ class RunLoopTest(unittest.TestCase):
             index.write_text("<html></html>", encoding="utf-8")
             window = self._run(index)
 
-            window.events.before_load.handlers[0]()
+            self._fire(window, "before_load")
             deadline = time.time() + 2
             while not window.scripts and time.time() < deadline:
                 time.sleep(0.01)
@@ -378,7 +461,7 @@ class RunLoopTest(unittest.TestCase):
             index.write_text("<html></html>", encoding="utf-8")
             window = self._run(index)
 
-            window.events.before_load.handlers[0]()
+            self._fire(window, "before_load")
             deadline = time.time() + 2
             while not window.scripts and time.time() < deadline:
                 time.sleep(0.01)
@@ -570,8 +653,17 @@ class DevServerTest(unittest.TestCase):
         time.sleep(0.3)
         _stop(process)
 
-        with self.assertRaises(ProcessLookupError):
-            os.killpg(process.pid, 0)
+        # The group is gone as soon as its last member is signalled, but the
+        # kernel can still report it for a moment, so poll instead of asserting
+        # once — otherwise this flakes on a loaded machine.
+        deadline = time.time() + 2
+        while time.time() < deadline:
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.05)
+        self.fail("process group survived _stop()")
 
 
 class BuildArgvTest(unittest.TestCase):
@@ -800,6 +892,221 @@ class HotkeyTest(unittest.TestCase):
         self.assertEqual(table["order"], ["ctrl", "meta", "alt", "shift"])
         self.assertIn(table["mod"], ("ctrl", "meta"))
         self.assertEqual(json.loads(json.dumps(table)), table, "must survive the trip to JS")
+
+
+class WebviewSurfaceTest(unittest.TestCase):
+    """The parts of pywebview's window API Zagred had not reached yet."""
+
+    def _app(self):
+        """An App with a fake window already attached, so nothing blocks."""
+        app = App()
+        app._window = _FakeWindow()
+        return app, app._window
+
+    def test_control_methods_delegate_to_the_window(self):
+        app, window = self._app()
+
+        app.load_css("body { color: red }")
+        app.run_js("1+1")
+
+        self.assertEqual(window.calls, [("load_css", "body { color: red }"), ("run_js", "1+1")])
+        self.assertEqual(app.get_current_url(), "http://127.0.0.1:5173/")
+
+    def test_evaluate_js_returns_the_value(self):
+        app, window = self._app()
+
+        self.assertEqual(app.evaluate_js("document.title"), "answered")
+        self.assertEqual(window.exports, [threading.current_thread().name])
+
+    def test_only_apis_that_work_on_linux_are_offered(self):
+        """Every removed call was measured broken or pointless on GTK."""
+        removed = (
+            "load_html",  # kills pywebview's bridge on the next navigation
+            "create_file_dialog",  # Gtk.Dialog.run() off the main thread
+            "create_confirmation_dialog",  # same
+            "get_cookies",  # no server session to keep
+            "clear_cookies",
+        )
+        app, _ = self._app()
+
+        for name in removed:
+            self.assertFalse(hasattr(App, name), name)
+
+    def test_live_properties_read_from_the_window(self):
+        app, _ = self._app()
+
+        self.assertEqual((app.width, app.height, app.x, app.y, app.state), (1024, 700, 10, 20, "NORMAL"))
+
+    def test_properties_refuse_to_guess_before_the_window_exists(self):
+        app = App()
+
+        for name in ("width", "height", "x", "y", "state"):
+            with self.subTest(name=name), self.assertRaises(RuntimeError):
+                getattr(app, name)
+
+    def test_on_event_reaches_every_hook_with_the_event_arguments(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "index.html"
+            index.write_text("<html></html>", encoding="utf-8")
+            seen = []
+            app = App()
+            @app.on_event("resized")
+            def first(width, height):
+                seen.append((width, height))
+
+            app.on_event("resized", lambda width, height: seen.append("second"))
+
+            window = _fake_webview_run(index, app=app)
+            window.events.resized.handlers[0](800, 600)
+
+            self.assertEqual(seen, [(800, 600), "second"])
+
+    def test_on_event_can_veto_a_close(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "index.html"
+            index.write_text("<html></html>", encoding="utf-8")
+            app = App()
+            app.on_event("closing", lambda: False)
+            app.on_event("closing", lambda: print("never reached"))
+
+            window = _fake_webview_run(index, app=app)
+
+            self.assertIs(window.events.closing.handlers[0](), False)
+
+    def test_an_unknown_event_fails_before_the_window_opens(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "index.html"
+            index.write_text("<html></html>", encoding="utf-8")
+            app = App()
+            app.on_event("resizedd", lambda: None)
+
+            with self.assertRaises(ValueError) as caught:
+                _fake_webview_run(index, app=app)
+
+            self.assertIn("resizedd", str(caught.exception))
+            self.assertIn("available:", str(caught.exception))
+
+    def test_emit_is_dropped_until_the_page_has_loaded(self):
+        # run_js waits up to 20s for the before_load event, so emitting from an
+        # earlier hook (initialized, before_show) used to freeze the GUI thread
+        # instead of returning.
+        app, window = self._app()
+
+        app.emit("loaded", {"x": 1})
+        self.assertEqual(window.calls, [])
+
+        app._ready = True
+        app.emit("loaded", {"x": 1})
+        deadline = time.time() + 2
+        while not window.calls and time.time() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(window.calls[0][0], "run_js")
+
+    def test_emit_is_dropped_again_after_a_navigation_starts(self):
+        # A reload fires before_load once more; the gate has to close, or emit
+        # from that hook waits 20s inside pywebview's before_load gate and
+        # freezes the GUI thread.
+        app = App()
+        app._ready = True
+        app._window = _FakeWindow()
+
+        app._ready = False  # yang dilakukan handler before_load
+        app.emit("loaded", {"x": 1})
+        self.assertEqual(app._window.calls, [])
+
+    def test_emit_survives_a_window_that_cannot_run_js_yet(self):
+        # before_load/before_show get a live window object that cannot execute JS
+        # yet; pywebview raises there, and that exception used to abort the load
+        # event which called the hook.
+        app, window = self._app()
+        app._ready = True
+
+        def explode(script):
+            raise RuntimeError("Main window failed to start")
+
+        window.run_js = explode
+        app.emit("loaded", {"x": 1})
+
+    def test_emit_still_rejects_a_payload_that_is_not_json(self):
+        app, _ = self._app()
+        app._ready = True
+
+        with self.assertRaises(TypeError):
+            app.emit("bad", object())
+
+    def test_bridge_reports_when_a_dispatch_is_in_flight(self):
+        seen = {}
+        bridge = Bridge({})
+        bridge._registry["probe_busy"] = lambda: seen.setdefault("busy", bridge.busy)
+
+        self.assertFalse(bridge.busy)
+        bridge.call("probe_busy", {})
+        self.assertTrue(seen["busy"])
+        self.assertFalse(bridge.busy)
+
+    def test_load_url_is_deferred_while_a_bridge_call_is_running(self):
+        # pywebview delivers the result to JS after the function returns; if the
+        # document is already navigating, that delivery blocks for 20s and takes
+        # every later call down with it.
+        app, window = self._app()
+        window.load_url = lambda url: window.calls.append(("load_url", url))
+        app._bridge = SimpleNamespace(busy=True)
+
+        app.load_url("http://example.test/")
+        self.assertEqual(window.calls, [])
+
+        time.sleep(0.5)
+        self.assertEqual(window.calls[-1], ("load_url", "http://example.test/"))
+
+    def test_load_url_navigates_immediately_outside_a_bridge_call(self):
+        app, window = self._app()
+        window.load_url = lambda url: window.calls.append(("load_url", url))
+        app._bridge = SimpleNamespace(busy=False)
+
+        app.load_url("http://example.test/")
+
+        self.assertEqual(window.calls, [("load_url", "http://example.test/")])
+
+    def test_settings_and_start_options_reach_pywebview(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "index.html"
+            index.write_text("<html></html>", encoding="utf-8")
+            app = App(
+                settings={"ALLOW_DOWNLOADS": True},
+                start={"user_agent": "zagred/test", "private_mode": False},
+                draggable=True,
+            )
+
+            window = _fake_webview_run(index, app=app)
+
+            self.assertEqual(window.settings["ALLOW_DOWNLOADS"], True)
+            self.assertEqual(window.start_kwargs["user_agent"], "zagred/test")
+            self.assertEqual(window.start_kwargs["private_mode"], False)
+            self.assertIs(window.kw["draggable"], True)
+
+    def test_a_mistyped_option_is_rejected_with_the_valid_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "index.html"
+            index.write_text("<html></html>", encoding="utf-8")
+
+            for kwargs, needle in (
+                ({"settings": {"ALLOW_DOWNLOAD": True}}, "webview.settings"),
+                ({"start": {"useragent": "x"}}, "webview.start"),
+            ):
+                with self.subTest(kwargs=kwargs), self.assertRaises(ValueError) as caught:
+                    RunLoopTest._run(self, index, app=App(**kwargs))
+                self.assertIn(needle, str(caught.exception))
+
+    def test_start_cannot_override_what_zagred_owns(self):
+        # func/args/debug/icon are passed by run() itself; a duplicate keyword
+        # would be a TypeError deep inside pywebview instead of a clear message.
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "index.html"
+            index.write_text("<html></html>", encoding="utf-8")
+
+            for key in ("func", "args", "debug", "icon"):
+                with self.subTest(key=key), self.assertRaises(ValueError):
+                    RunLoopTest._run(self, index, app=App(start={key: None}))
 
 
 if __name__ == "__main__":

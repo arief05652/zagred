@@ -56,11 +56,6 @@ def add(a: int, b: int) -> int:
     return a + b
 
 
-@app.expose
-def pick_file() -> str | None:
-    """Native dialog, driven from the UI."""
-    files = app.create_file_dialog(allow_multiple=False)
-    return files[0] if files else None
 '''
 
 GITIGNORE = """\
